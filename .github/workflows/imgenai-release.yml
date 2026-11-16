@@ -68,7 +68,7 @@ jobs:
           fi
           gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft \
             --title "imgenai Code $VERSION" \
-            --notes "imgenai Code $VERSION。基于开源项目 Codex++（AGPL-3.0）修改，源码即本仓库。"
+            --notes "imgenai Code ${VERSION}。基于开源项目 Codex++（AGPL-3.0）修改，源码即本仓库。"
 
   macos-build:
     name: macOS build (${{ matrix.target }})
@@ -201,7 +201,7 @@ jobs:
           set -euo pipefail
           if [ "$HAS_SIGNING" = "true" ]; then
             export MACOS_SIGNING_IDENTITY="$SIGNING_IDENTITY_SECRET"
-            echo "正式签名：$MACOS_SIGNING_IDENTITY；公证：${MACOS_NOTARY_PROFILE:-未配置}"
+            echo "正式签名：${MACOS_SIGNING_IDENTITY}；公证：${MACOS_NOTARY_PROFILE:-未配置}"
           else
             echo "未配置 Developer ID 证书：ad-hoc 签名，跳过公证"
           fi

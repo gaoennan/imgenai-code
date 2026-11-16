@@ -221,6 +221,10 @@ jobs:
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
     steps:
+      # Windows 构建机默认把换行转成 CRLF，改名与版本号脚本按仓库里的 LF 解析，检出前关掉转换。
+      - name: Keep LF line endings
+        run: git config --global core.autocrlf false
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.RELEASE_TAG }}

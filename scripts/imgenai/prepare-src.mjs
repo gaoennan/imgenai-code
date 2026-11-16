@@ -73,10 +73,15 @@ if (version) {
   const { VERSION_FILES } = await import(pathToFileURL(path.join(dest, "scripts", "release-meta.mjs")).href);
   for (const { file, read, bump } of VERSION_FILES) {
     const target = path.join(dest, file);
-    const text = fs.readFileSync(target, "utf8");
+    // 上游的读写规则按 LF 写；检出成 CRLF 时先换成 LF 处理，写回时再还原。
+    const raw = fs.readFileSync(target, "utf8");
+    const crlf = raw.includes("\r\n");
+    const text = crlf ? raw.replace(/\r\n/g, "\n") : raw;
     const from = read(text);
     if (!from) throw new Error(`读不到 ${file} 里的版本号`);
-    fs.writeFileSync(target, bump(text, from, version));
+    const bumped = bump(text, from, version);
+    if (read(bumped) !== version) throw new Error(`${file} 的版本号没改成 ${version}`);
+    fs.writeFileSync(target, crlf ? bumped.replace(/\n/g, "\r\n") : bumped);
   }
   log(`版本号改为 ${version}（${VERSION_FILES.map((entry) => entry.file).join("、")}）`);
 }

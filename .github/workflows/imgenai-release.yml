@@ -1,7 +1,8 @@
 # imgenai Code 发版：推送 imgenai-v<版本号> 标签（例如 imgenai-v1.0.0）触发。
 #
 #   准备    建草稿 Release
-#   macOS   两个架构各编一遍 → 合成通用二进制 → 打 DMG（没配签名时 ad-hoc 签名）
+#   macOS   两个架构各编一遍 → 合成通用二进制 → 打 DMG（没配签名时 ad-hoc 签名）→ 公证。
+#           公证等超时就在这次运行上点「Re-run failed jobs」，会接着等同一个提交，不重新打包。
 #   Windows 编译 → NSIS 安装包 + zip
 #   收尾    SHA256SUMS.txt、latest.json（客户端自动更新读它）。推标签触发时停在草稿，
 #           确认安装包没问题后在 GitHub 网页上点发布，或手动运行本工作流并勾选 publish。
@@ -116,13 +117,16 @@ jobs:
             ${{ runner.temp }}/src/target/${{ matrix.target }}/release/codex-plus-plus
             ${{ runner.temp }}/src/target/${{ matrix.target }}/release/codex-plus-legacy-shim
           if-no-files-found: error
-          retention-days: 1
+          # 留一周：重跑时没找到待公证的包（比如上次连提交都没成功），还要用它们重新打包。
+          retention-days: 7
 
   macos-dmg:
     name: macOS DMG (universal)
     needs: [prepare, macos-build]
     runs-on: macos-15
     # Apple 新账号头几次公证可能排几个小时；留足时间（GitHub 上限 6 小时）。
+    # 提交公证后包和提交号先存成构建产物（macos-dmg-pending）。等超时了在这次运行上点「Re-run failed jobs」，
+    # 会接着等同一个提交并装订这个包，不重新打包，也不用从头排队。
     timeout-minutes: 340
     env:
       MACOSX_DEPLOYMENT_TARGET: "12.0"
@@ -141,22 +145,50 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # 重跑时先找上一次尝试存下的包：有就接着等那次公证。重新打包会生成新文件，得从头排队。
+      - name: Look for a DMG from an earlier attempt
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: macos-dmg-pending
+          path: ${{ runner.temp }}/pending
+
+      - name: Resume or build
+        shell: bash
+        run: |
+          set -euo pipefail
+          DMG="$(ls "$RUNNER_TEMP"/pending/*.dmg 2>/dev/null | head -1 || true)"
+          if [ -n "$DMG" ] && [ -s "$RUNNER_TEMP/pending/notary-id.txt" ]; then
+            ID="$(tr -d '[:space:]' < "$RUNNER_TEMP/pending/notary-id.txt")"
+            echo "接着等上一次的公证：$(basename "$DMG")，提交 id ${ID}"
+            {
+              echo "RESUME=1"
+              echo "DMG_PATH=$DMG"
+              echo "NOTARY_ID=$ID"
+            } >> "$GITHUB_ENV"
+          else
+            echo "没有等公证的包，重新打包"
+          fi
+
       - name: Prepare imgenai Code source
+        if: env.RESUME != '1'
         run: node scripts/imgenai/prepare-src.mjs "$RUNNER_TEMP/src" --version "$VERSION" --update-repo "$GITHUB_REPOSITORY"
 
       - uses: actions/download-artifact@v4
+        if: env.RESUME != '1'
         with:
           name: macos-bin-x86_64-apple-darwin
           path: ${{ runner.temp }}/src/target/x86_64-apple-darwin/release
 
       - uses: actions/download-artifact@v4
+        if: env.RESUME != '1'
         with:
           name: macos-bin-aarch64-apple-darwin
           path: ${{ runner.temp }}/src/target/aarch64-apple-darwin/release
 
       # 证书导入与公证凭据的写法照搬上游 release-assets.yml 的 macos-dmg 任务。
       - name: Import Developer ID certificate
-        if: env.HAS_SIGNING == 'true'
+        if: env.HAS_SIGNING == 'true' && env.RESUME != '1'
         env:
           MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
           MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
@@ -196,6 +228,7 @@ jobs:
           echo "IMGENAI_NOTARY_PROFILE=imgenai-notary" >> "$GITHUB_ENV"
 
       - name: Build universal DMG
+        if: env.RESUME != '1'
         working-directory: ${{ runner.temp }}/src
         env:
           UNIVERSAL_SKIP_BUILD: "1"
@@ -211,18 +244,17 @@ jobs:
           chmod +x target/*-apple-darwin/release/codex-plus-plus target/*-apple-darwin/release/codex-plus-legacy-shim
           bash scripts/installer/macos/build-universal.sh "$VERSION"
           ls -la dist/macos/*.dmg
+          echo "DMG_PATH=$(ls "$PWD"/dist/macos/*.dmg | head -1)" >> "$GITHUB_ENV"
 
-      # 提交公证后每分钟查一次状态：查询失败（断网、Apple 接口抖动）只是下一分钟再查，不让整步失败；
-      # Accepted 后装订票据（用户离线也能过 Gatekeeper），Invalid / Rejected 打出 Apple 的日志后失败。
-      - name: Notarize DMG
-        if: env.IMGENAI_NOTARY_PROFILE != ''
+      # 提交失败（断网、Apple 接口抖动）隔 30 秒重试，最多 5 次。提交成功后把包和提交号放进同一个目录，下一步存成构建产物。
+      - name: Submit for notarization
+        if: env.IMGENAI_NOTARY_PROFILE != '' && env.RESUME != '1'
         run: |
           set -euo pipefail
-          DMG="$(ls "$RUNNER_TEMP"/src/dist/macos/*.dmg | head -1)"
           json_field() { python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1], ""))' "$1"; }
           ID=""
           for attempt in 1 2 3 4 5; do
-            if OUT="$(xcrun notarytool submit "$DMG" --keychain-profile "$IMGENAI_NOTARY_PROFILE" --output-format json 2>"$RUNNER_TEMP/notary.err")"; then
+            if OUT="$(xcrun notarytool submit "$DMG_PATH" --keychain-profile "$IMGENAI_NOTARY_PROFILE" --output-format json 2>"$RUNNER_TEMP/notary.err")"; then
               ID="$(printf '%s' "$OUT" | json_field id)"
               [ -n "$ID" ] && break
             fi
@@ -231,6 +263,29 @@ jobs:
           done
           [ -n "$ID" ] || { echo "::error::提交公证失败"; exit 1; }
           echo "公证提交 id：${ID}"
+          echo "NOTARY_ID=$ID" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/pending-out"
+          cp "$DMG_PATH" "$RUNNER_TEMP/pending-out/"
+          printf '%s\n' "$ID" > "$RUNNER_TEMP/pending-out/notary-id.txt"
+
+      - name: Keep DMG until notarization finishes
+        if: env.IMGENAI_NOTARY_PROFILE != '' && env.RESUME != '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg-pending
+          path: ${{ runner.temp }}/pending-out/
+          if-no-files-found: error
+          retention-days: 14
+          overwrite: true
+
+      # 每分钟查一次状态：查询失败只是下一分钟再查，不让整步失败。Accepted 后装订票据（用户离线也能过 Gatekeeper），
+      # Invalid / Rejected 打出 Apple 的日志后失败（得改代码、升版本号重新发）。
+      - name: Wait for notarization
+        if: env.IMGENAI_NOTARY_PROFILE != ''
+        run: |
+          set -euo pipefail
+          json_field() { python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1], ""))' "$1"; }
+          ID="$NOTARY_ID"
           DEADLINE=$(( $(date +%s) + 5 * 3600 ))
           STATUS=""
           while [ "$(date +%s)" -lt "$DEADLINE" ]; do
@@ -249,15 +304,18 @@ jobs:
             esac
             sleep 60
           done
-          [ "$STATUS" = "Accepted" ] || { echo "::error::等公证超时（最后状态：${STATUS:-未知}），提交 id ${ID}"; exit 1; }
-          xcrun stapler staple "$DMG"
-          xcrun stapler validate "$DMG"
-          echo "公证通过，票据已装订：$(basename "$DMG")"
+          if [ "$STATUS" != "Accepted" ]; then
+            echo "::error::等公证超时（最后状态：${STATUS:-未知}），提交 id ${ID}。包已存成构建产物 macos-dmg-pending，在这次运行上点「Re-run failed jobs」会接着等同一个提交。"
+            exit 1
+          fi
+          xcrun stapler staple "$DMG_PATH"
+          xcrun stapler validate "$DMG_PATH"
+          echo "公证通过，票据已装订：$(basename "$DMG_PATH")"
 
       - name: Upload DMG
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$RELEASE_TAG" "$RUNNER_TEMP"/src/dist/macos/*.dmg --clobber --repo "$GITHUB_REPOSITORY"
+        run: gh release upload "$RELEASE_TAG" "$DMG_PATH" --clobber --repo "$GITHUB_REPOSITORY"
 
   windows:
     name: Windows installer

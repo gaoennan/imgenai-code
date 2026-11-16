@@ -40,6 +40,8 @@ git push origin imgenai-v1.0.1
 
 推标签后云端构建 macOS 通用 DMG 与 Windows 安装包、生成 `latest.json`，**停在草稿**（只有仓库成员看得到）。确认安装包没问题后在 GitHub 网页上把草稿发布（勾选 Latest），客户端的「检查更新」才会读到这一版。
 
+公证等超时（Apple 新账号头几次常排好几个小时）时 Mac 那一步会失败，但包和公证提交号已经存成这次运行的构建产物 `macos-dmg-pending`（留 14 天）。在这次运行上点「Re-run failed jobs」（或 `gh run rerun <运行号> --failed`），会接着等同一个提交，通过后装订、上传并补齐 `latest.json`，不重新打包，也不用从头排队。
+
 ### macOS 正式签名与公证
 
 仓库 Secrets 里配了下面几项时，macOS 包会用 Developer ID 正式签名并提交 Apple 公证；没配时 ad-hoc 签名（用户首次打开要在「系统设置 → 隐私与安全性」里放行）。

@@ -4,6 +4,8 @@
 例外：zed.svg（Zed Industries）、vscodium.svg、jetbrains.svg、raycast.svg 来自 Simple Icons
 （https://github.com/simple-icons/simple-icons），按 CC0 1.0 使用，同样只用于标识对应的应用。
 
+imgenai-color.svg 是 imgenai 自己的标志，不属于上面两个图标库。
+
 MIT License
 
 Copyright (c) 2023 LobeHub

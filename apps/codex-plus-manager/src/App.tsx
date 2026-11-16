@@ -103,7 +103,7 @@ import {
 import { createPresetPatch } from "@/components/ProviderPresetSelector";
 import { PRESETS, type ProviderPreset } from "./presets";
 import { createPortal } from "react-dom";
-import { managerExtensionPages, managerNavPages, managerPageOverrides, type ManagerExtensionPage, type ManagerNavGroup, type ManagerPageSummary } from "./extension-manager-pages";
+import { MANAGER_NAVIGATE_EVENT, managerExtensionPages, managerNavPages, managerPageOverrides, type ManagerExtensionPage, type ManagerNavGroup, type ManagerPageSummary } from "./extension-manager-pages";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
 
 import { Badge as UiBadge } from "@/components/ui/badge";
@@ -4919,6 +4919,17 @@ export function App() {
     void navigate(target as Route);
     return true;
   };
+  // 管理器内部组件请求换页（如「添加供应商」目录里点 imgenai 打开账户页）：与拓展页面的 navigate 同一套规则。
+  const navigateFromExtensionRef = useRef(navigateFromExtension);
+  navigateFromExtensionRef.current = navigateFromExtension;
+  useEffect(() => {
+    const onNavigate = (event: Event) => {
+      const target = (event as CustomEvent<unknown>).detail;
+      if (typeof target === "string") navigateFromExtensionRef.current(target);
+    };
+    window.addEventListener(MANAGER_NAVIGATE_EVENT, onNavigate);
+    return () => window.removeEventListener(MANAGER_NAVIGATE_EVENT, onNavigate);
+  }, []);
   useEffect(() => {
     if (settingsFocus) setSettingsSections(settingsSectionsFor(settingsFocus));
   }, [settingsFocus]);

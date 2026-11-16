@@ -67,6 +67,7 @@ import { ProviderKeyList } from "./ProviderKeyList";
 import { ProviderTestDialog } from "./ProviderTestDialog";
 import { gatewayJump } from "./gateway-store";
 import { useEscapeLayer } from "./use-escape-layer";
+import { MANAGER_NAVIGATE_EVENT } from "./extension-manager-pages";
 import { singleAgent, visibleAgents } from "./agent-focus-model";
 import { useAgentFocus } from "./agent-focus-store";
 
@@ -1068,6 +1069,10 @@ function AgentPicks({ payload, picked, onChange }: { payload: GatewayPayload | n
 
 type CatalogItem = { key: string; name: string; added?: boolean; icon?: ReactNode; onClick: () => void };
 
+/** 内置拓展「imgenai 账户」的 key 与它声明的供应商地址（见 assets/extensions/imgenai-account/codexpp.json）。 */
+const IMGENAI_ACCOUNT_EXTENSION = "bundled:imgenai-account";
+const IMGENAI_BASE_URL = "https://api.imgenai.net/v1";
+
 /** 编辑时给哪些 Agent 用（#3030）：每个已接入 Agent 一个开关，改的是各自的「挑选」排除列表。 */
 function EditAgentPicks({ payload, busy, run, entry }: { payload: GatewayPayload | null; busy: string | null; run: Run; entry: GatewayPoolEntry }) {
   const focus = useAgentFocus();
@@ -1157,7 +1162,20 @@ function ProviderCatalog({
     ...presetItems("local"),
     ...(hit(t("自定义")) ? [{ key: "custom", name: t("自定义"), icon: <span className="gw-avatar gw-avatar-plus" data-size="sm"><Plus className="h-3.5 w-3.5" /></span>, onClick: onCustom }] : []),
   ];
+  // imgenai 的供应商由内置拓展「imgenai 账户」声明，登录后自动带着密钥并入供应商池；
+  // 这里点它打开账户页（没登录就登录，登录了看额度、去选模型），不走手填密钥的表单。
+  const imgenaiAdded = Boolean(payload?.pool.some((entry) => entry.source === `extension:${IMGENAI_ACCOUNT_EXTENSION}`));
+  const imgenai: CatalogItem[] = hit("imgenai", IMGENAI_BASE_URL) ? [{
+    key: "imgenai",
+    name: "imgenai",
+    added: imgenaiAdded,
+    onClick: () => {
+      onClose();
+      window.dispatchEvent(new CustomEvent(MANAGER_NAVIGATE_EVENT, { detail: `ext:${IMGENAI_ACCOUNT_EXTENSION}` }));
+    },
+  }] : [];
   const sections: Array<{ key: string; title: string; hint: string; items: CatalogItem[] }> = [
+    { key: "imgenai", title: "imgenai", hint: imgenaiAdded ? t("已登录，已自动加入供应商池；点开查看额度、充值") : t("登录 imgenai 账户即可使用，无需手填密钥"), items: imgenai },
     { key: "sponsor", title: t("赞助商"), hint: t("支持 Codex++ 的服务商"), items: presetItems("sponsor") },
     { key: "subscription", title: t("订阅"), hint: t("登录即可，无需密钥；与 Codex 自己的登录互不影响"), items: subscriptions },
     { key: "vendor", title: t("供应商"), hint: t("模型厂商的 API"), items: presetItems("vendor") },

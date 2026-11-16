@@ -2,6 +2,7 @@
 export const BRAND_ICON_URLS: Record<string, string> = {
   "aihubmix-color": new URL("./assets/providers/aihubmix-color.svg", import.meta.url).href,
   "antigravity-color": new URL("./assets/providers/antigravity-color.svg", import.meta.url).href,
+  "imgenai-color": new URL("./assets/providers/imgenai-color.svg", import.meta.url).href,
   "azure-color": new URL("./assets/providers/azure-color.svg", import.meta.url).href,
   "baiducloud-color": new URL("./assets/providers/baiducloud-color.svg", import.meta.url).href,
   "bailian-color": new URL("./assets/providers/bailian-color.svg", import.meta.url).href,

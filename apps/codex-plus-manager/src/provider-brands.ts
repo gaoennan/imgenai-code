@@ -2,6 +2,7 @@
 
 /** `-color` 结尾的是彩色图标，其余是单色图标（界面按当前文字颜色着色，深浅色都清楚）。 */
 const BRAND_RULES: Array<[RegExp, string]> = [
+  [/imgenai/, "imgenai-color"],
   [/claude|anthropic/, "claude-color"],
   [/chatgpt|openai|\bgpt\b|codex/, "openai"],
   [/deepseek/, "deepseek-color"],

@@ -9,6 +9,9 @@
 
 export type ManagerNavGroup = "gateway" | "management" | "tools";
 
+/** 管理器内部组件请求换页（目标写法同拓展页面的 codexPlusManager.navigate：内置页面的路由 id，或 ext:<拓展 key>），App 监听后跳转。 */
+export const MANAGER_NAVIGATE_EVENT = "codexpp:manager-navigate";
+
 export type ManagerPageSummary = {
   title: string;
   nav?: ManagerNavGroup | null;

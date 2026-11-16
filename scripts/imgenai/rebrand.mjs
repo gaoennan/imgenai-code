@@ -183,6 +183,30 @@ const POST_FILE_RULES = {
   "assets/inject/renderer-inject.js": ABOUT_INJECT_RULES.map((rule) => ({ ...rule, name: `${rule.name}（组装产物）` })),
 };
 
+// 上游的赞助商（给上游作者付费推广的同行中转站）：「添加供应商」目录不再单列，预设与只测它们的测试一并删掉。
+// imgenai 自己的入口是 GatewayProviders.tsx 里的 imgenai 分组（点开账户页登录，密钥由拓展自动同步）。
+// 赞助商名单上游经常换，这里从副本里现读，不写死。
+const SPONSORS_FILE = "apps/codex-plus-manager/src/gateway-model.ts";
+const SPONSORS_DECL = /(export const SPONSORS: Array<\{ id: string; expiresAt: string \}> = )\[[\s\S]*?\n\];/;
+const sponsorIds = (() => {
+  const file = path.join(root, SPONSORS_FILE);
+  const block = fs.existsSync(file) ? fs.readFileSync(file, "utf8").match(SPONSORS_DECL)?.[0] ?? "" : "";
+  return [...block.matchAll(/id: "([^"]+)"/g)].map((match) => match[1]);
+})();
+const sponsorAlternation = sponsorIds.map((id) => id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+POST_FILE_RULES[SPONSORS_FILE] = [
+  { name: "去掉上游赞助商名单", from: new RegExp(SPONSORS_DECL.source, "g"), to: "$1[];" },
+];
+if (sponsorIds.length) {
+  POST_FILE_RULES["apps/codex-plus-manager/src/presets.ts"] = [
+    { name: "删掉上游赞助商的预设", from: new RegExp(`\\n  \\{\\n    id: "(?:${sponsorAlternation})",[\\s\\S]*?\\n  \\},`, "g"), to: "" },
+  ];
+  // 只删「提到赞助商 id 的那几个测试」：每个测试从 test(" 开始、到行首的 }); 结束，不跨测试匹配。
+  const sponsorTests = { name: "删掉只测上游赞助商的测试", from: new RegExp(`\\ntest\\("[^\\n]*\\{(?:(?!\\n\\}\\);)[\\s\\S])*?"(?:${sponsorAlternation})"[\\s\\S]*?\\n\\}\\);`, "g"), to: "" };
+  POST_FILE_RULES["apps/codex-plus-manager/src/gateway-model.test.ts"] = [sponsorTests];
+  POST_FILE_RULES["apps/codex-plus-manager/src/presets.test.ts"] = [{ ...sponsorTests, name: `${sponsorTests.name}（预设）` }];
+}
+
 function walk(dir, out = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);

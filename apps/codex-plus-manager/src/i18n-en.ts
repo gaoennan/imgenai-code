@@ -838,6 +838,8 @@ export const EN_PLAIN: Record<string, string> = {
   "在本地服务内消化上游过载与限流，尽量不把错误交给 Agent。作用于经过网关和旧版本地协议代理的请求。": "Absorb upstream overloads and rate limits in the local service instead of handing errors to the agent. Applies to requests through the gateway and the legacy protocol proxy.",
   "加状态码，回车": "Add a status, Enter",
   "赞助商": "Sponsors",
+  "已登录，已自动加入供应商池；点开查看额度、充值": "Signed in and added to the provider pool automatically; open to check quota or top up",
+  "登录 imgenai 账户即可使用，无需手填密钥": "Sign in to your imgenai account to use it; no API key to paste",
   "支持 Codex++ 的服务商": "Services that support Codex++",
   "保存价格与代理": "Save price & proxy",
   "未填写，不估算费用": "Not set, no cost estimate",

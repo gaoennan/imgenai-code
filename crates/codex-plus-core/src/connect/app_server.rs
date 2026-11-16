@@ -124,8 +124,25 @@ fn resolve_startup_executable(configured: &str) -> String {
         if !configured.is_empty() {
             return configured.to_string();
         }
+        // macOS 没填路径时先用桌面版自带的 CLI（与桌面版同一版本、同一签名），再退回 PATH 里的 `codex`。
+        // PATH 里常是很久以前 npm 装的旧版：版本落后 app-server 协议，还可能被系统直接杀掉（启动即 SIGKILL，
+        // 包装脚本一直等，表现为「初始化 Codex app-server 失败」）。
+        #[cfg(target_os = "macos")]
+        if let Some(bundled) = macos_desktop_codex_cli(Path::new("/Applications")) {
+            return bundled;
+        }
         "codex".to_string()
     }
+}
+
+/// 桌面版（ChatGPT.app / Codex.app）自带的 Codex CLI，找不到返回 None。`applications` 便于测试替换。
+#[cfg(target_os = "macos")]
+fn macos_desktop_codex_cli(applications: &Path) -> Option<String> {
+    ["ChatGPT.app", "Codex.app"]
+        .iter()
+        .map(|app| applications.join(app).join("Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"))
+        .find(|candidate| candidate.is_file())
+        .map(|candidate| candidate.to_string_lossy().into_owned())
 }
 
 #[cfg(windows)]
@@ -2355,9 +2372,26 @@ mod tests {
         );
         let fallback = resolve_startup_executable("");
         assert!(
-            fallback == "codex" || fallback.to_ascii_lowercase().ends_with("codex.exe"),
+            fallback == "codex"
+                || fallback.to_ascii_lowercase().ends_with("codex.exe")
+                || fallback.ends_with("codex-cli/CodexCLI.app/Contents/MacOS/codex"),
             "{fallback}"
         );
+    }
+
+    /// macOS 留空时先用桌面版自带的 CLI（ChatGPT.app 优先，其次 Codex.app），都没有才退回 PATH。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_prefers_desktop_bundled_cli() {
+        let temp = tempfile::tempdir().unwrap();
+        assert_eq!(macos_desktop_codex_cli(temp.path()), None, "没装桌面版");
+        let cli = |app: &str| temp.path().join(app).join("Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex");
+        std::fs::create_dir_all(cli("Codex.app").parent().unwrap()).unwrap();
+        std::fs::write(cli("Codex.app"), b"").unwrap();
+        assert_eq!(macos_desktop_codex_cli(temp.path()).as_deref(), Some(cli("Codex.app").to_str().unwrap()));
+        std::fs::create_dir_all(cli("ChatGPT.app").parent().unwrap()).unwrap();
+        std::fs::write(cli("ChatGPT.app"), b"").unwrap();
+        assert_eq!(macos_desktop_codex_cli(temp.path()).as_deref(), Some(cli("ChatGPT.app").to_str().unwrap()), "ChatGPT.app 优先");
     }
 
     #[test]

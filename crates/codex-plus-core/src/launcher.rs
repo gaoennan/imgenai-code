@@ -1335,6 +1335,13 @@ impl LaunchHooks for DefaultLaunchHooks {
     fn cleanup_unsupported_config(&self, settings: &BackendSettings) -> anyhow::Result<()> {
         let home = crate::relay_config::default_codex_home_dir();
         crate::relay_config::cleanup_unsupported_approval_policies_in_home(&home)?;
+        // 接入网关后旧会话用过、配置里已经没有的供应商（如教程里的 imgenai）：补成当前网关的别名，旧会话能继续聊。
+        if let Err(error) = crate::relay_config::ensure_session_provider_aliases_in_home(&home) {
+            let _ = crate::diagnostic_log::append_diagnostic_log(
+                "launcher.session_provider_aliases_failed",
+                serde_json::json!({ "message": error.to_string() }),
+            );
+        }
         // 「显示 Max / Ultra 档位」：启动前把 max、ultra 补进 Codex 的可选档位（Ultra 的远程开关由页面侧补）。
         if settings.enhancements_enabled
             && settings.codex_app_reasoning_effort_unlock

@@ -9129,3 +9129,62 @@ fn reasoning_effort_unlock_is_on_by_default() {
     let parsed: codex_plus_core::settings::BackendSettings = serde_json::from_str("{}").unwrap();
     assert!(parsed.codex_app_reasoning_effort_unlock, "旧设置文件没有这一项时也按开");
 }
+
+/// 接入网关后，旧会话用过、配置里已经没有的供应商（教程里的 imgenai）补成当前网关的别名；
+/// 用户自己写着的供应商表、内置 id、当前供应商都不动；没接网关时不补；之前补的别名跟着当前供应商刷新。
+#[test]
+fn session_provider_aliases_keep_old_chats_usable_through_the_gateway() {
+    use codex_plus_core::relay_config::ensure_session_provider_aliases_in_home;
+    let home = tempfile::tempdir().unwrap();
+    let db = rusqlite::Connection::open(home.path().join("state_5.sqlite")).unwrap();
+    db.execute_batch("CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT);").unwrap();
+    for (id, provider) in [("a", "imgenai"), ("b", "custom"), ("c", "openai"), ("d", "mine"), ("e", "codex_plus_managed"), ("f", "imgenai")] {
+        db.execute("INSERT INTO threads (id, model_provider) VALUES (?1, ?2)", [id, provider]).unwrap();
+    }
+    drop(db);
+    let config_path = home.path().join("config.toml");
+    let read = || -> toml::Value { toml::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap() };
+
+    // 不登录 ChatGPT 的网关接入：当前供应商 custom 指向本机网关。
+    let gateway = |token: &str| format!(
+        "model_provider = \"custom\"\nmodel = \"gpt-6-astra\"\n\n[model_providers.custom]\nname = \"网关\"\nwire_api = \"responses\"\nrequires_openai_auth = true\nbase_url = \"http://127.0.0.1:57521/gw/codex/v1\"\nexperimental_bearer_token = \"{token}\"\n\n[model_providers.mine]\nname = \"我自己的\"\nbase_url = \"https://mine.example/v1\"\n"
+    );
+    std::fs::write(&config_path, gateway("t1")).unwrap();
+    assert!(ensure_session_provider_aliases_in_home(home.path()).unwrap());
+    let config = read();
+    let providers = config["model_providers"].as_table().unwrap();
+    let alias = providers["imgenai"].as_table().unwrap();
+    assert_eq!(alias["base_url"].as_str(), Some("http://127.0.0.1:57521/gw/codex/v1"));
+    assert_eq!(alias["experimental_bearer_token"].as_str(), Some("t1"));
+    assert_eq!(alias["name"].as_str(), Some("imgenai（历史会话别名）"));
+    assert_eq!(providers["mine"]["base_url"].as_str(), Some("https://mine.example/v1"), "用户自己写着的不动");
+    assert!(!providers.contains_key("openai") && !providers.contains_key("codex_plus_managed"), "内置 id 与 Codex++ 自己的别名不在这里补");
+    assert_eq!(config["model_provider"].as_str(), Some("custom"));
+    assert!(!ensure_session_provider_aliases_in_home(home.path()).unwrap(), "再跑一次不改");
+
+    // 网关 token 换了：之前补的别名跟着刷新。
+    let mut doc: toml_edit::DocumentMut = std::fs::read_to_string(&config_path).unwrap().parse().unwrap();
+    doc["model_providers"]["custom"]["experimental_bearer_token"] = toml_edit::value("t2");
+    std::fs::write(&config_path, doc.to_string()).unwrap();
+    assert!(ensure_session_provider_aliases_in_home(home.path()).unwrap());
+    assert_eq!(read()["model_providers"]["imgenai"]["experimental_bearer_token"].as_str(), Some("t2"));
+
+    // 保留 ChatGPT 登录的网关接入：内置 openai + openai_base_url 指向本地代理。
+    std::fs::write(&config_path, "model_provider = \"openai\"\nopenai_base_url = \"http://127.0.0.1:57521/v1\"\n").unwrap();
+    assert!(ensure_session_provider_aliases_in_home(home.path()).unwrap());
+    let config = read();
+    let alias = config["model_providers"]["imgenai"].as_table().unwrap();
+    assert_eq!(alias["base_url"].as_str(), Some("http://127.0.0.1:57521/v1"));
+    assert_eq!(alias["requires_openai_auth"].as_bool(), Some(true));
+    assert!(config["model_providers"].get("custom").is_some(), "旧会话用过的 custom 也补上");
+
+    // 用户自己还写着 imgenai（直连）：不碰。
+    std::fs::write(&config_path, format!("{}\n[model_providers.imgenai]\nname = \"imgenai\"\nbase_url = \"https://api.imgenai.net/v1\"\n", gateway("t1"))).unwrap();
+    ensure_session_provider_aliases_in_home(home.path()).unwrap();
+    assert_eq!(read()["model_providers"]["imgenai"]["base_url"].as_str(), Some("https://api.imgenai.net/v1"));
+
+    // 没接本机网关（直连中转站）：不补别名。
+    std::fs::write(&config_path, "model_provider = \"other\"\n\n[model_providers.other]\nname = \"other\"\nbase_url = \"https://relay.example/v1\"\n").unwrap();
+    assert!(!ensure_session_provider_aliases_in_home(home.path()).unwrap());
+    assert!(read()["model_providers"].get("imgenai").is_none());
+}

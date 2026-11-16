@@ -532,6 +532,140 @@ fn remove_managed_session_provider(doc: &mut DocumentMut) -> bool {
         .is_some()
 }
 
+/// 历史会话别名表的 `name` 后缀：认得出哪些供应商表是这里补的（之后跟着当前供应商刷新），用户自己写的表一律不碰。
+const SESSION_PROVIDER_ALIAS_MARK: &str = "（历史会话别名）";
+
+/// 接入本机网关时，历史会话用过、配置里已经没有的供应商 id 补一份当前供应商的别名表。
+///
+/// 典型情况：客户以前照教程手写 `model_provider = "imgenai"` + `[model_providers.imgenai]`，旧会话都记在 `imgenai` 名下；
+/// 接入网关后这段配置被换成网关自己的供应商，Codex 打开旧会话时报「此聊天使用的 imgenai 已移除配置」。
+/// 补上别名后旧会话照常打开、继续聊（请求走当前网关），不改写会话归属；用户自己写着的供应商表不动。
+/// 只在当前供应商指向本机（网关 / 本地代理）时生效；之前补的别名跟着当前供应商刷新。改了返回 true。
+fn sync_session_provider_aliases(doc: &mut DocumentMut, home: &Path) -> bool {
+    let Some(template) = local_gateway_provider_template(doc) else {
+        return false;
+    };
+    let active = doc
+        .get("model_provider")
+        .and_then(Item::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .unwrap_or("openai")
+        .to_string();
+    let mut changed = false;
+    for id in session_provider_ids(home) {
+        if id == active
+            || id == MANAGED_SESSION_PROVIDER
+            || RESERVED_MODEL_PROVIDER_IDS.contains(&id.as_str())
+            || !id.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+        {
+            continue;
+        }
+        let existing = doc.get("model_providers").and_then(|providers| providers.get(&id));
+        let ours = existing.is_some_and(|table| {
+            table
+                .get("name")
+                .and_then(Item::as_str)
+                .is_some_and(|name| name.ends_with(SESSION_PROVIDER_ALIAS_MARK))
+        });
+        if existing.is_some() && !ours {
+            continue;
+        }
+        let mut alias = template.clone();
+        alias["name"] = toml_edit::value(format!("{id}{SESSION_PROVIDER_ALIAS_MARK}"));
+        if existing.is_some_and(|table| table.to_string() == alias.to_string()) {
+            continue;
+        }
+        if doc.get("model_providers").is_none() {
+            doc["model_providers"] = toml_edit::table();
+        } else if let Some(inline) = doc["model_providers"].as_inline_table().cloned() {
+            doc["model_providers"] = Item::Table(inline.into_table());
+        }
+        if !doc["model_providers"].is_table_like() {
+            return changed;
+        }
+        doc["model_providers"][id.as_str()] = alias;
+        changed = true;
+    }
+    changed
+}
+
+/// 当前生效的供应商指向本机（网关或本地代理）时，返回可复制成别名的供应商表；否则 None（不补别名）。
+fn local_gateway_provider_template(doc: &DocumentMut) -> Option<Item> {
+    let is_local = |url: &str| {
+        let rest = url.trim().split_once("://").map(|(_, rest)| rest).unwrap_or("");
+        let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+        let host = host.rsplit_once(':').map(|(host, _)| host).unwrap_or(host);
+        matches!(host, "127.0.0.1" | "localhost" | "[::1]")
+    };
+    let active = doc
+        .get("model_provider")
+        .and_then(Item::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .unwrap_or("openai");
+    if active == "openai" {
+        let url = doc.get(OPENAI_BASE_URL_KEY).and_then(Item::as_str)?;
+        if !is_local(url) {
+            return None;
+        }
+        let mut builtin = Table::new();
+        builtin["name"] = toml_edit::value("OpenAI");
+        builtin["wire_api"] = toml_edit::value("responses");
+        builtin["requires_openai_auth"] = toml_edit::value(true);
+        builtin["base_url"] = toml_edit::value(url.trim());
+        return Some(Item::Table(builtin));
+    }
+    let provider = doc.get("model_providers")?.get(active)?;
+    let url = provider.get("base_url").and_then(Item::as_str)?;
+    if !is_local(url) {
+        return None;
+    }
+    match provider.as_inline_table() {
+        Some(inline) => Some(Item::Table(inline.clone().into_table())),
+        None => provider.is_table().then(|| provider.clone()),
+    }
+}
+
+/// Codex 会话索引里出现过的供应商 id（各个会话库去重）。读不到时返回空。
+fn session_provider_ids(home: &Path) -> std::collections::BTreeSet<String> {
+    let home = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
+    let mut ids = std::collections::BTreeSet::new();
+    for path in crate::codex_sqlite::codex_session_db_paths_from_home(&home) {
+        let Ok(connection) =
+            rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        else {
+            continue;
+        };
+        let Ok(mut statement) = connection.prepare(
+            "SELECT DISTINCT model_provider FROM threads WHERE model_provider IS NOT NULL AND model_provider <> ''",
+        ) else {
+            continue;
+        };
+        if let Ok(rows) = statement.query_map([], |row| row.get::<_, String>(0)) {
+            ids.extend(rows.flatten().map(|id| id.trim().to_string()).filter(|id| !id.is_empty()));
+        }
+    }
+    ids
+}
+
+/// 启动 Codex 前调用：见 [`sync_session_provider_aliases`]。没有 config.toml 时不建。
+pub fn ensure_session_provider_aliases_in_home(home: &Path) -> anyhow::Result<bool> {
+    let config_path = home.join("config.toml");
+    let Some(text) = read_optional_text(&config_path).ok().filter(|text| !text.trim().is_empty()) else {
+        return Ok(false);
+    };
+    let mut doc = parse_toml_document(&text)?;
+    if !sync_session_provider_aliases(&mut doc, home) {
+        return Ok(false);
+    }
+    if read_optional_text(&config_path)? != text {
+        anyhow::bail!("Codex 配置已被其他窗口更新，请重试");
+    }
+    crate::settings::atomic_write(&config_path, ensure_trailing_newline(doc.to_string()).as_bytes())?;
+    Ok(true)
+}
+
 fn managed_session_provider_needed(home: &Path, scan: ManagedSessionProviderScan) -> bool {
     let home = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
     crate::codex_sqlite::codex_session_db_paths_from_home(&home)
@@ -2902,6 +3036,8 @@ fn write_codex_live_atomic_with(
             let had_managed = parse_toml_document(&live)
                 .is_ok_and(|live| live.get("model_providers").and_then(|providers| providers.get(MANAGED_SESSION_PROVIDER)).is_some());
             sync_managed_session_provider(&mut doc, had_managed);
+            // 接入网关后，旧会话用过、配置里已经没有的供应商（如教程里的 imgenai）补成当前网关的别名。
+            sync_session_provider_aliases(&mut doc, home);
             Some(ensure_trailing_newline(doc.to_string()))
         }
         None => None,

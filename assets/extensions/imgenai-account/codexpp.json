@@ -1,0 +1,47 @@
+{
+  "id": "imgenai-account",
+  "name": "imgenai 账户",
+  "version": "1.0.0",
+  "description": "登录 imgenai 账号后自动配置中转密钥；查看今日额度、使用重置卡、开通订阅与购买加油包。",
+  "engines": { "codexpp": 1 },
+  "renderer": ["main.js"],
+  "backend": { "script": "backend/main.mjs" },
+  "manager": { "page": "manager.html", "title": "imgenai 账户", "nav": "gateway", "icon": "server" },
+  "config": {
+    "apiKey": {
+      "type": "string",
+      "title": "中转密钥",
+      "description": "登录后自动填写，一般不用手动改",
+      "secret": true,
+      "default": ""
+    },
+    "siteBase": {
+      "type": "string",
+      "title": "账户服务地址",
+      "description": "一般不用改",
+      "default": "https://imgenai.net"
+    }
+  },
+  "providers": [
+    {
+      "id": "imgenai",
+      "name": "imgenai",
+      "protocol": "responses",
+      "baseUrl": "https://api.imgenai.net/v1",
+      "apiKey": { "config": "apiKey" },
+      "requiresKey": true,
+      "models": [
+        "gpt-6.1-sol",
+        "gpt-6-astra",
+        "gpt-6.1-terra",
+        "gpt-6-sol",
+        "gpt-6-luna",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+        "codex-auto-review"
+      ],
+      "discoverModels": true
+    }
+  ]
+}

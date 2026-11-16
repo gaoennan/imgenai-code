@@ -1,0 +1,566 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --bg: transparent;
+    --card: #ffffff;
+    --border: rgba(15, 23, 42, 0.10);
+    --text: #0f172a;
+    --muted: #64748b;
+    --accent: #2563eb;
+    --accent-soft: rgba(37, 99, 235, 0.08);
+    --ok: #16a34a;
+    --warn: #d97706;
+    --danger: #dc2626;
+    --track: rgba(15, 23, 42, 0.08);
+  }
+  html[data-theme="dark"] {
+    --card: #1b1d24;
+    --border: rgba(255, 255, 255, 0.10);
+    --text: #e5e7eb;
+    --muted: #9ca3af;
+    --accent: #60a5fa;
+    --accent-soft: rgba(96, 165, 250, 0.12);
+    --ok: #4ade80;
+    --warn: #fbbf24;
+    --danger: #f87171;
+    --track: rgba(255, 255, 255, 0.10);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 4px 2px 16px;
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.55 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+  h2 { font-size: 15px; margin: 0 0 4px; }
+  h3 { font-size: 13px; margin: 0 0 10px; color: var(--muted); font-weight: 600; }
+  .muted { color: var(--muted); }
+  .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .spread { justify-content: space-between; }
+  .grow { flex: 1; min-width: 0; }
+  label { display: block; margin: 10px 0 4px; color: var(--muted); }
+  input {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+  }
+  input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+  button {
+    padding: 7px 14px;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.link { border: none; padding: 0; color: var(--accent); background: none; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .error { color: var(--danger); margin-top: 8px; min-height: 1em; }
+  .stat { font-size: 22px; font-weight: 600; }
+  .bar { height: 8px; border-radius: 4px; background: var(--track); overflow: hidden; margin: 8px 0 4px; }
+  .bar > div { height: 100%; background: var(--accent); border-radius: 4px; }
+  .badge {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 12px;
+  }
+  .badge.off { background: var(--track); color: var(--muted); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .plan {
+    text-align: left;
+    padding: 12px;
+    border-radius: 9px;
+    border: 1px solid var(--border);
+  }
+  .plan.selected { border: 2px solid var(--accent); padding: 11px; background: var(--accent-soft); }
+  .plan b { display: block; font-size: 14px; }
+  .qr { text-align: center; }
+  .qr img { width: 200px; height: 200px; background: #fff; padding: 8px; border-radius: 8px; border: 1px solid var(--border); }
+  .hidden { display: none !important; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; }
+  .kv span:nth-child(odd) { color: var(--muted); }
+</style>
+</head>
+<body>
+  <!-- 未登录 -->
+  <section id="login-view" class="card hidden">
+    <h2>登录 imgenai 账号</h2>
+    <div class="muted">登录后自动配置中转密钥，Codex 里直接选 imgenai 的模型即可使用。</div>
+    <form id="login-form" autocomplete="on">
+      <label for="phone">手机号</label>
+      <input id="phone" name="phone" inputmode="numeric" autocomplete="username" placeholder="注册时用的手机号">
+      <label for="password">密码</label>
+      <input id="password" name="password" type="password" autocomplete="current-password">
+      <div class="error" id="login-error"></div>
+      <div class="row spread" style="margin-top: 10px">
+        <div class="row">
+          <button type="button" class="link" data-site="">注册账号</button>
+          <span class="muted">·</span>
+          <button type="button" class="link" data-site="">忘记密码</button>
+        </div>
+        <button type="submit" class="primary" id="login-btn">登录</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- 已登录 -->
+  <section id="account-view" class="hidden">
+    <div class="card">
+      <div class="row spread">
+        <div class="grow">
+          <h2 id="account-name">—</h2>
+          <div class="row">
+            <span class="badge" id="tier-badge">—</span>
+            <span class="muted" id="expire-text"></span>
+          </div>
+        </div>
+        <div class="row">
+          <button id="refresh-btn">刷新</button>
+          <button id="logout-btn">退出登录</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" id="quota-card">
+      <h3>今日额度</h3>
+      <div class="row spread">
+        <div><span class="stat" id="remaining-text">—</span> <span class="muted" id="cap-text"></span></div>
+        <button id="reset-card-btn" class="hidden">用重置卡</button>
+      </div>
+      <div class="bar"><div id="quota-bar" style="width: 0%"></div></div>
+      <div class="muted" id="quota-note"></div>
+      <div class="muted" id="pack-note"></div>
+      <div class="muted" id="reset-card-note"></div>
+    </div>
+
+    <div class="card" id="trial-card">
+      <h3>免费试用</h3>
+      <div class="row spread">
+        <div class="muted">每个账号可领一次 1 天试用（每日 $10）。</div>
+        <button id="trial-btn" class="primary">领取试用</button>
+      </div>
+    </div>
+
+    <div class="card" id="buy-card">
+      <h3 id="buy-title">开通订阅</h3>
+      <div class="grid" id="plans"></div>
+      <div class="row spread" style="margin-top: 12px">
+        <div class="muted" id="buy-note"></div>
+        <button id="buy-btn" class="primary">去支付</button>
+      </div>
+    </div>
+
+    <div class="card" id="pack-card">
+      <h3>积分加油包</h3>
+      <div class="row spread">
+        <div class="muted grow" id="pack-desc">当日额度用完后自动使用，0 点不清零。</div>
+        <button id="pack-btn">购买加油包</button>
+      </div>
+    </div>
+
+    <div class="card" id="key-card">
+      <h3>客户端接入</h3>
+      <div class="row spread">
+        <div class="grow">
+          <div id="key-status">—</div>
+          <div class="muted" id="key-hint"></div>
+        </div>
+        <div class="row">
+          <button id="key-btn">重新获取密钥</button>
+          <button id="agents-btn">去选模型</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="row muted" style="padding: 0 4px">
+      <button class="link" data-site="">打开官网（充值记录、修改密码等）</button>
+    </div>
+  </section>
+
+  <!-- 支付 -->
+  <section id="pay-view" class="card hidden">
+    <h2 id="pay-title">扫码支付</h2>
+    <div class="qr" style="margin: 12px 0">
+      <img id="pay-qr" alt="支付二维码">
+      <div class="muted" id="pay-qr-missing" style="margin-top: 8px"></div>
+    </div>
+    <div class="muted" id="pay-status" style="text-align: center">请用微信扫码，支付完成后会自动刷新。</div>
+    <div class="row" style="justify-content: center; margin-top: 12px">
+      <button id="pay-open-btn">在浏览器打开</button>
+      <button id="pay-cancel-btn">返回</button>
+    </div>
+  </section>
+
+  <div class="card hidden" id="loading-view"><span class="muted">加载中…</span></div>
+
+<script>
+(() => {
+  const api = window.codexPlusManager;
+  const $ = (id) => document.getElementById(id);
+  const views = ["login-view", "account-view", "pay-view", "loading-view"];
+  const show = (id) => views.forEach((view) => $(view).classList.toggle("hidden", view !== id));
+  const money = (value) => {
+    const number = Number(value);
+    return Number.isFinite(number) ? `$${number.toFixed(2)}` : "—";
+  };
+  const dateText = (value) => {
+    if (!value) return "";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString("zh-CN");
+  };
+  const maskPhone = (phone) => (/^\d{11}$/.test(phone) ? `${phone.slice(0, 3)}****${phone.slice(7)}` : phone || "imgenai 用户");
+  const call = async (method, params) => {
+    try {
+      return await api.backend.call(method, params || {});
+    } catch (error) {
+      return { ok: false, code: "BACKEND", message: String(error?.message || error) };
+    }
+  };
+
+  // 档位只用于展示与选择，实际金额由网站后端按档位与剩余天数计算。
+  const PLANS = [
+    { key: "paid", name: "标准档", price: 68, cap: 35 },
+    { key: "pro", name: "专业档", price: 128, cap: 90 },
+  ];
+  let state = { sub: null, user: null, plan: "paid", order: null, poll: null, busy: false };
+
+  api.onTheme?.((theme) => { document.documentElement.dataset.theme = theme; });
+  if (api.theme) document.documentElement.dataset.theme = api.theme();
+
+  document.querySelectorAll("[data-site]").forEach((button) => {
+    button.addEventListener("click", () => call("openSite", { hash: button.dataset.site }));
+  });
+
+  async function boot() {
+    show("loading-view");
+    const result = await call("state");
+    if (result.ok && result.loggedIn) {
+      await refresh();
+    } else {
+      show("login-view");
+    }
+  }
+
+  // ---------- 登录 ----------
+  $("login-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const phone = $("phone").value.trim();
+    const password = $("password").value;
+    $("login-error").textContent = "";
+    if (!phone || !password) {
+      $("login-error").textContent = "请填写手机号和密码";
+      return;
+    }
+    $("login-btn").disabled = true;
+    const result = await call("login", { phone, password });
+    $("login-btn").disabled = false;
+    $("password").value = "";
+    if (!result.ok) {
+      $("login-error").textContent = result.message || "登录失败";
+      return;
+    }
+    await refresh();
+    await syncKey({ quiet: true });
+  });
+
+  $("logout-btn").addEventListener("click", async () => {
+    await call("logout");
+    try {
+      await api.config.set({ apiKey: "" });
+    } catch (error) {
+      // 拓展停用时写不了配置，忽略。
+    }
+    state.sub = null;
+    show("login-view");
+    api.toast?.("已退出登录，客户端密钥已清除");
+  });
+
+  $("refresh-btn").addEventListener("click", () => refresh());
+
+  // ---------- 账户总览 ----------
+  async function refresh() {
+    const result = await call("overview");
+    if (!result.ok) {
+      if (result.code === "SESSION_EXPIRED" || result.code === "NOT_LOGGED_IN") {
+        show("login-view");
+        $("login-error").textContent = result.message;
+        return;
+      }
+      show("account-view");
+      $("quota-note").textContent = `读取账户失败：${result.message}`;
+      return;
+    }
+    if (!result.loggedIn) {
+      show("login-view");
+      return;
+    }
+    state.user = result.user;
+    state.sub = result.sub || {};
+    render();
+    show("account-view");
+    await renderKeyStatus();
+  }
+
+  function render() {
+    const sub = state.sub || {};
+    const active = !!sub.active;
+    $("account-name").textContent = maskPhone(state.user?.phone || "");
+    $("tier-badge").textContent = active ? sub.tier_label || "已订阅" : "未订阅";
+    $("tier-badge").classList.toggle("off", !active);
+    $("expire-text").textContent = active && sub.expire_at ? `到期 ${dateText(sub.expire_at)}` : "";
+
+    // 今日额度
+    $("quota-card").classList.toggle("hidden", !active);
+    if (active) {
+      const cap = Number(sub.daily_cap_usd) || 0;
+      const remaining = Number(sub.daily_remaining_usd);
+      const used = Number(sub.daily_used_usd);
+      $("remaining-text").textContent = money(remaining);
+      $("cap-text").textContent = cap ? `/ ${money(cap)}` : "";
+      const percent = cap > 0 && Number.isFinite(remaining) ? Math.max(0, Math.min(100, (remaining / cap) * 100)) : 0;
+      $("quota-bar").style.width = `${percent}%`;
+      $("quota-note").textContent = Number.isFinite(used) ? `今日已用 ${money(used)}，北京时间 0 点恢复` : "";
+      const packLeft = Number(sub.pack_remaining_usd);
+      $("pack-note").textContent = packLeft > 0 ? `加油包剩余 ${money(packLeft)}${sub.pack_frozen ? "（订阅到期已冻结，续费后恢复）" : ""}` : "";
+      const cards = Number(sub.reset_cards) || 0;
+      $("reset-card-btn").classList.toggle("hidden", cards <= 0);
+      $("reset-card-btn").textContent = `用重置卡（${cards}）`;
+      $("reset-card-btn").disabled = !sub.can_use_reset_card;
+      $("reset-card-note").textContent = cards > 0
+        ? (sub.reset_card_used_today ? "今天已用过重置卡，明天可再用" : sub.reset_card_next_expire_at ? `最近一张 ${dateText(sub.reset_card_next_expire_at)} 到期` : "")
+        : "";
+    }
+
+    // 免费试用：没订阅过且没用过试用时显示
+    $("trial-card").classList.toggle("hidden", active || !!sub.free_trial_used);
+
+    // 订阅 / 续费 / 升级
+    $("buy-title").textContent = active ? "续费或升级" : "开通订阅";
+    renderPlans();
+
+    // 加油包
+    const canPack = !!sub.can_buy_pack;
+    $("pack-card").classList.toggle("hidden", !active || (!canPack && !sub.pack_eligible));
+    $("pack-btn").disabled = !canPack;
+    const packPrice = sub.pack_price != null ? `¥${sub.pack_price}` : "";
+    const packUsd = sub.pack_usd != null ? money(sub.pack_usd) : "";
+    const weekly = sub.pack_week_limit ? `，近 7 天已买 ${Number(sub.pack_week_bought) || 0}/${sub.pack_week_limit} 次` : "";
+    $("pack-desc").textContent = `${packPrice ? `${packPrice} 得 ${packUsd}` : "加油包"}，当日额度用完后自动使用，0 点不清零${weekly}。`
+      + (!canPack && sub.pack_next_available_at ? ` 下次可买：${dateText(sub.pack_next_available_at)}` : "");
+  }
+
+  function renderPlans() {
+    const sub = state.sub || {};
+    const container = $("plans");
+    container.textContent = "";
+    for (const plan of PLANS) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `plan${state.plan === plan.key ? " selected" : ""}`;
+      const upgrade = sub.active && sub.can_upgrade && sub.upgrade_to === plan.key;
+      const title = document.createElement("b");
+      title.textContent = `${plan.name} ¥${plan.price}/30 天`;
+      const detail = document.createElement("span");
+      detail.className = "muted";
+      detail.textContent = upgrade ? `补差价 ¥${sub.upgrade_price} 升级，到期日不变` : `每日 $${plan.cap} 额度`;
+      button.append(title, detail);
+      button.addEventListener("click", () => {
+        state.plan = plan.key;
+        renderPlans();
+      });
+      container.append(button);
+    }
+    const chosen = PLANS.find((plan) => plan.key === state.plan) || PLANS[0];
+    const upgrade = sub.active && sub.can_upgrade && sub.upgrade_to === chosen.key;
+    const sameTier = sub.active && sub.tier === chosen.key;
+    $("buy-note").textContent = upgrade
+      ? `应付 ¥${sub.upgrade_price}`
+      : sameTier ? `续费 ¥${chosen.price}，在当前到期日上顺延 30 天` : `应付 ¥${chosen.price}`;
+  }
+
+  // ---------- 操作 ----------
+  async function runAction(button, method, params) {
+    if (state.busy) return null;
+    state.busy = true;
+    button.disabled = true;
+    const result = await call(method, params);
+    state.busy = false;
+    button.disabled = false;
+    if (!result.ok) {
+      api.toast?.(result.message || "操作失败");
+      if (result.code === "SESSION_EXPIRED") show("login-view");
+    }
+    return result;
+  }
+
+  // 面板在沙箱 iframe 里，浏览器的确认框弹不出来：改成「再点一次确认」，5 秒内不点就还原。
+  let resetArmed = null;
+  $("reset-card-btn").addEventListener("click", async () => {
+    const sub = state.sub || {};
+    const button = $("reset-card-btn");
+    if (!resetArmed) {
+      button.textContent = `再点一次：恢复到 ${money(sub.daily_cap_usd)}`;
+      button.classList.add("primary");
+      resetArmed = setTimeout(() => {
+        resetArmed = null;
+        render();
+      }, 5000);
+      return;
+    }
+    clearTimeout(resetArmed);
+    resetArmed = null;
+    button.classList.remove("primary");
+    const result = await runAction(button, "useResetCard");
+    if (result?.ok) {
+      api.toast?.(result.message || "已使用重置卡");
+      await refresh();
+    }
+  });
+
+  $("trial-btn").addEventListener("click", async () => {
+    const result = await runAction($("trial-btn"), "freeTrial");
+    if (result?.ok) {
+      api.toast?.(result.message || "已开通免费试用");
+      await refresh();
+      await syncKey({ quiet: true });
+    }
+  });
+
+  $("buy-btn").addEventListener("click", () => startPayment({ kind: "subscription", plan: state.plan }));
+  $("pack-btn").addEventListener("click", () => startPayment({ kind: "pack" }));
+
+  // ---------- 支付 ----------
+  async function startPayment(params) {
+    const button = params.kind === "pack" ? $("pack-btn") : $("buy-btn");
+    const result = await runAction(button, "createOrder", params);
+    if (!result?.ok) return;
+    state.order = { ...result, kind: params.kind };
+    // 金额只用于展示，实际以网站后端下单金额为准（与官网同一套计算）。
+    const sub = state.sub || {};
+    const chosen = PLANS.find((plan) => plan.key === params.plan) || PLANS[0];
+    const amount = params.kind === "pack"
+      ? sub.pack_price
+      : sub.active && sub.can_upgrade && sub.upgrade_to === chosen.key ? sub.upgrade_price : chosen.price;
+    const label = params.kind === "pack" ? "购买加油包" : sub.active && sub.tier === chosen.key ? `续费${chosen.name}` : `开通${chosen.name}`;
+    $("pay-title").textContent = amount != null ? `${label} · 应付 ¥${amount}` : label;
+    $("pay-qr").classList.toggle("hidden", !result.qrDataUrl);
+    if (result.qrDataUrl) $("pay-qr").src = result.qrDataUrl;
+    $("pay-qr-missing").textContent = result.qrDataUrl ? "" : "二维码没加载出来，请点「在浏览器打开」完成支付。";
+    $("pay-status").textContent = "请用微信扫码，支付完成后会自动刷新。";
+    show("pay-view");
+    startPolling(result.tradeOrderId);
+  }
+
+  function stopPolling() {
+    if (state.poll) clearInterval(state.poll);
+    state.poll = null;
+  }
+
+  function startPolling(tradeOrderId) {
+    stopPolling();
+    const startedAt = Date.now();
+    state.poll = setInterval(async () => {
+      if (Date.now() - startedAt > 5 * 60 * 1000) {
+        stopPolling();
+        $("pay-status").textContent = "等待超时。已付款的话点「返回」后刷新即可，订单会自动到账。";
+        return;
+      }
+      const result = await call("orderStatus", { tradeOrderId });
+      if (result.ok === false && result.code === "SESSION_EXPIRED") {
+        stopPolling();
+        show("login-view");
+        $("login-error").textContent = "登录已过期，重新登录后订单会自动到账";
+        return;
+      }
+      if (result.ok && result.status === "paid") {
+        stopPolling();
+        api.toast?.(state.order?.kind === "pack" ? "加油包已到账" : "订阅已开通");
+        state.order = null;
+        await refresh();
+        await syncKey({ quiet: true });
+      }
+    }, 3000);
+  }
+
+  $("pay-open-btn").addEventListener("click", () => {
+    if (state.order?.paymentUrl) call("openUrl", { url: state.order.paymentUrl });
+  });
+  $("pay-cancel-btn").addEventListener("click", async () => {
+    stopPolling();
+    state.order = null;
+    await refresh();
+  });
+
+  // ---------- 客户端密钥 ----------
+  async function currentKey() {
+    try {
+      const values = await api.config.get();
+      return String(values?.apiKey || "");
+    } catch (error) {
+      return "";
+    }
+  }
+
+  async function renderKeyStatus() {
+    const key = await currentKey();
+    const active = !!state.sub?.active;
+    $("key-status").textContent = key ? `已配置（${key.slice(0, 6)}…${key.slice(-4)}）` : "未配置";
+    $("key-hint").textContent = key
+      ? "在「网关 → 智能体」里给 Codex 打开接入，选 imgenai 开头的模型即可。"
+      : active ? "点「重新获取密钥」自动配置。" : "开通订阅或领取试用后会自动配置。";
+  }
+
+  async function syncKey({ quiet } = {}) {
+    const result = await call("ensureKey");
+    if (!result.ok) {
+      if (!quiet || !["RELAY_NO_SUBSCRIPTION", "RELAY_NOT_ENABLED"].includes(result.code)) {
+        api.toast?.(result.message || "获取密钥失败");
+      }
+      await renderKeyStatus();
+      return false;
+    }
+    if (result.key && result.key !== (await currentKey())) {
+      try {
+        await api.config.set({ apiKey: result.key });
+      } catch (error) {
+        api.toast?.(`保存密钥失败：${error?.message || error}`);
+        return false;
+      }
+    }
+    if (!quiet) api.toast?.("密钥已配置");
+    await renderKeyStatus();
+    return true;
+  }
+
+  $("key-btn").addEventListener("click", async () => {
+    $("key-btn").disabled = true;
+    await syncKey({ quiet: false });
+    $("key-btn").disabled = false;
+  });
+  $("agents-btn").addEventListener("click", () => api.navigate?.("gateway"));
+
+  boot();
+})();
+</script>
+</body>
+</html>

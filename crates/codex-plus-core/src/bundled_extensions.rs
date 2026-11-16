@@ -11,6 +11,8 @@
 //!   解码速度走 `/request-log/recent`，完成消息角标在进入会话时读
 //!   `/thread-usage-history`；这些路由都走拓展白名单且只读。
 //! - 「请求状态条」（`proxy-request-status`）：取数走拓展白名单里的只读路由 `/proxy-status`。
+//! - 「imgenai 账户」（`imgenai-account`）：imgenai 分发版新增。管理器页面登录 imgenai 账号、看额度、用重置卡、
+//!   开通订阅与加油包；常驻后台调 imgenai 网站接口；声明的 `imgenai` 供应商用登录后拿到的密钥并入网关。默认启用。
 use std::path::Path;
 
 use anyhow::Context;
@@ -33,6 +35,9 @@ pub const USAGE_STATUSLINE_KEY: &str = "bundled:usage-statusline";
 /// 请求状态条拓展包。
 pub const PROXY_REQUEST_STATUS_DIR: &str = "proxy-request-status";
 pub const PROXY_REQUEST_STATUS_KEY: &str = "bundled:proxy-request-status";
+/// imgenai 账户拓展包（imgenai 分发版）。
+pub const IMGENAI_ACCOUNT_DIR: &str = "imgenai-account";
+pub const IMGENAI_ACCOUNT_KEY: &str = "bundled:imgenai-account";
 
 /// 改成官方拓展包的内置拓展：(原内置拓展 id, 接替它的官方拓展包 key)。第三方拓展包清单里
 /// `replaces` 写原 id 仍然有效，它启用时对应的官方拓展包让位（见 `UserScriptManager` 的扫描）。
@@ -58,6 +63,10 @@ const USAGE_STATUSLINE_MAIN: &str = include_str!("../../../assets/extensions/usa
 const PROXY_REQUEST_STATUS_MANIFEST: &str = include_str!("../../../assets/extensions/proxy-request-status/codexpp.json");
 const PROXY_REQUEST_STATUS_ENGINE: &str = include_str!("../../../assets/extensions/proxy-request-status/status.js");
 const PROXY_REQUEST_STATUS_MAIN: &str = include_str!("../../../assets/extensions/proxy-request-status/main.js");
+const IMGENAI_ACCOUNT_MANIFEST: &str = include_str!("../../../assets/extensions/imgenai-account/codexpp.json");
+const IMGENAI_ACCOUNT_MAIN: &str = include_str!("../../../assets/extensions/imgenai-account/main.js");
+const IMGENAI_ACCOUNT_MANAGER: &str = include_str!("../../../assets/extensions/imgenai-account/manager.html");
+const IMGENAI_ACCOUNT_BACKEND: &str = include_str!("../../../assets/extensions/imgenai-account/backend/main.mjs");
 
 const AGENT_PET_MANIFEST: &str = include_str!("../../../assets/extensions/agent-pet/codexpp.json");
 const AGENT_PET_PET: &str = include_str!("../../../assets/extensions/agent-pet/pet.js");
@@ -146,6 +155,16 @@ pub fn proxy_request_status_files() -> Vec<(&'static str, Vec<u8>)> {
     ]
 }
 
+/// imgenai 账户拓展包的全部文件。
+pub fn imgenai_account_files() -> Vec<(&'static str, Vec<u8>)> {
+    vec![
+        ("codexpp.json", IMGENAI_ACCOUNT_MANIFEST.as_bytes().to_vec()),
+        ("main.js", IMGENAI_ACCOUNT_MAIN.as_bytes().to_vec()),
+        ("manager.html", IMGENAI_ACCOUNT_MANAGER.as_bytes().to_vec()),
+        ("backend/main.mjs", IMGENAI_ACCOUNT_BACKEND.as_bytes().to_vec()),
+    ]
+}
+
 /// 全部官方拓展包：(目录名, 包内文件)。
 pub fn packages() -> Vec<(&'static str, Vec<(&'static str, Vec<u8>)>)> {
     vec![
@@ -154,6 +173,7 @@ pub fn packages() -> Vec<(&'static str, Vec<(&'static str, Vec<u8>)>)> {
         (IMAGE_OVERLAY_DIR, image_overlay_files()),
         (USAGE_STATUSLINE_DIR, usage_statusline_files()),
         (PROXY_REQUEST_STATUS_DIR, proxy_request_status_files()),
+        (IMGENAI_ACCOUNT_DIR, imgenai_account_files()),
     ]
 }
 

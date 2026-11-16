@@ -297,3 +297,83 @@ fn replacing_a_retired_builtin_id_makes_the_bundled_package_yield() {
     assert_eq!(bundled["enabled"], true);
     assert!(bundled["replacedBy"].is_null());
 }
+
+// ---- imgenai 分发版：账户拓展包 ----
+
+use codex_plus_core::bundled_extensions::{IMGENAI_ACCOUNT_KEY, imgenai_account_files};
+
+#[test]
+fn imgenai_account_package_is_valid_and_enabled_by_default() {
+    let temp = tempfile::tempdir().unwrap();
+    let manager = ready(temp.path());
+    manager.migrate_bundled_builtins(&BackendSettings::default()).unwrap();
+    let item = script(&manager, IMGENAI_ACCOUNT_KEY);
+    assert_eq!(item["error"], "", "{item}");
+    assert_eq!(item["source"], "bundled");
+    assert_eq!(item["package"]["id"], "imgenai-account");
+    assert_eq!(item["enabled"], true, "账户拓展默认启用");
+
+    // 迁移只做一次：用户停用后再迁移不会被打开。
+    manager.set_script_enabled(IMGENAI_ACCOUNT_KEY, false).unwrap();
+    manager.migrate_bundled_builtins(&BackendSettings::default()).unwrap();
+    assert_eq!(script(&manager, IMGENAI_ACCOUNT_KEY)["enabled"], false);
+}
+
+#[test]
+fn imgenai_provider_uses_the_key_saved_after_login() {
+    let temp = tempfile::tempdir().unwrap();
+    let manager = ready(temp.path());
+    manager.migrate_bundled_builtins(&BackendSettings::default()).unwrap();
+
+    let provider = |manager: &UserScriptManager| {
+        manager
+            .enabled_extension_providers()
+            .unwrap()
+            .into_iter()
+            .find(|(extension, provider)| extension == "imgenai-account" && provider.id == "imgenai")
+            .map(|(_, provider)| provider)
+    };
+    // 没登录（没有密钥）时不并入网关，Codex 里不会列出一排必然 401 的模型。
+    assert!(provider(&manager).is_none(), "没登录时不并入网关");
+
+    // 管理器页面登录后经 config.set 写入 apiKey，供应商立即并入并用上这把密钥。
+    let mut values = Map::new();
+    values.insert("apiKey".into(), json!("sk-test-key"));
+    manager.update_extension_config(IMGENAI_ACCOUNT_KEY, &values).unwrap();
+    let after = provider(&manager).expect("登录后并入网关");
+    assert_eq!(after.api_key, "sk-test-key");
+    assert_eq!(after.base_url, "https://api.imgenai.net/v1");
+    assert_eq!(after.protocol, "responses");
+    assert!(after.models.iter().any(|model| model == "gpt-6.1-sol"));
+
+    // 退出登录清空密钥后又不并入了。
+    values.insert("apiKey".into(), json!(""));
+    manager.update_extension_config(IMGENAI_ACCOUNT_KEY, &values).unwrap();
+    assert!(provider(&manager).is_none(), "退出登录后不再并入");
+    values.insert("apiKey".into(), json!("sk-test-key"));
+    manager.update_extension_config(IMGENAI_ACCOUNT_KEY, &values).unwrap();
+
+    // 停用拓展后供应商消失。
+    manager.set_script_enabled(IMGENAI_ACCOUNT_KEY, false).unwrap();
+    assert!(manager.enabled_extension_providers().unwrap().iter().all(|(extension, _)| extension != "imgenai-account"));
+}
+
+#[test]
+fn imgenai_account_scripts_only_use_public_interfaces() {
+    let files = imgenai_account_files();
+    for path in ["codexpp.json", "main.js", "manager.html", "backend/main.mjs"] {
+        assert!(files.iter().any(|(name, _)| *name == path), "缺少 {path}");
+    }
+    for (path, content) in files {
+        let source = String::from_utf8(content).unwrap();
+        for private in ["__codexSessionDeleteBridge", "__CODEX_PLUS_", "postJson(", "codexPlusSettings("] {
+            assert!(!source.contains(private), "{path} 还在用 {private}");
+        }
+        // 管理器面板在沙箱里，弹窗类接口用不了。
+        if path == "manager.html" {
+            for blocked in ["confirm(", "alert(", "prompt(", "window.open("] {
+                assert!(!source.contains(blocked), "{path} 用了沙箱里不可用的 {blocked}");
+            }
+        }
+    }
+}

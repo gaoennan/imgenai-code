@@ -379,7 +379,8 @@ export default async function* (context, next) {
 在 `codexpp_extension_write` 的 `providers` 参数里声明 `[{ id, name, protocol: "responses" | "chat" | "anthropic", baseUrl,
 apiKey: { "config": "apiKey" }, models: [...] }]`，同时在 `config` 里声明 `apiKey`（string、secret）。并入 Codex++ 网关后，
 模型名是 `<id>/<模型>`，要在网关模式下使用。Key 让用户在拓展设置里填，不要写进代码，也不要让用户把 Key 发进对话。
-上游有 `/models` 接口时可以写 `discoverModels: true` 自动拉模型列表。
+上游有 `/models` 接口时可以写 `discoverModels: true` 自动拉模型列表。Key 要等用户填好才有时写 `requiresKey: true`，
+没填 Key 时这个供应商先不出现在模型列表里。
 
 ## 拓展之间共享能力（服务）
 

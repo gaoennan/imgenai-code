@@ -247,6 +247,8 @@ impl UserScriptManager {
         self.migrate_bundled(crate::bundled_extensions::USAGE_STATUSLINE_KEY, config, enabled)?;
         let (config, enabled) = crate::bundled_extensions::proxy_request_status_migration(settings);
         self.migrate_bundled(crate::bundled_extensions::PROXY_REQUEST_STATUS_KEY, config, enabled)?;
+        // imgenai 分发版：账户拓展第一次出现时默认启用（没有旧设置要换算）。
+        self.migrate_bundled(crate::bundled_extensions::IMGENAI_ACCOUNT_KEY, Map::new(), true)?;
         Ok(())
     }
 
@@ -862,11 +864,15 @@ impl UserScriptManager {
             .flat_map(|package| {
                 let id = package.id.clone();
                 let config = package.config.clone();
-                package.providers.into_iter().map(move |mut provider| {
+                package.providers.into_iter().filter_map(move |mut provider| {
                     if let Some(key) = &provider.api_key_config {
                         provider.api_key = config.get(key).and_then(Value::as_str).unwrap_or_default().to_string();
                     }
-                    (id.clone(), provider)
+                    // 声明了 requiresKey 的供应商没拿到 Key 时先不并入网关。
+                    if provider.requires_key && provider.api_key.trim().is_empty() {
+                        return None;
+                    }
+                    Some((id.clone(), provider))
                 })
             })
             .collect())
@@ -2019,6 +2025,8 @@ pub struct ExtensionProvider {
     /// `override: true`：与已有供应商同 id 时顶替它（拓展停用后恢复）；默认以已有的为准。
     #[serde(rename = "override")]
     pub override_existing: bool,
+    /// `requiresKey: true`：Key 为空时不并入网关（比如要登录后才拿得到 Key 的供应商），免得列出一排必然 401 的模型。
+    pub requires_key: bool,
 }
 
 /// 拓展的一条定时任务：每隔 `every_minutes` 分钟（或每天 `at` 时刻）调用后台方法 `method`。
@@ -2123,7 +2131,8 @@ fn parse_extension_providers(value: Option<&Value>, schema: &[ExtensionConfigFie
                 anyhow::bail!("providers.{id}.models 至少要有一个模型（或设 discoverModels: true 从上游拉）");
             }
             let override_existing = item.get("override").and_then(Value::as_bool).unwrap_or(false);
-            Ok(ExtensionProvider { name: if text("name").is_empty() { id.clone() } else { text("name") }, id, protocol, base_url, api_key, api_key_config, models, discover_models, override_existing })
+            let requires_key = item.get("requiresKey").and_then(Value::as_bool).unwrap_or(false);
+            Ok(ExtensionProvider { name: if text("name").is_empty() { id.clone() } else { text("name") }, id, protocol, base_url, api_key, api_key_config, models, discover_models, override_existing, requires_key })
         })
         .collect()
 }

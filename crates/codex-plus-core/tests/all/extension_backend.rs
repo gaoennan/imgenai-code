@@ -482,3 +482,59 @@ fn schedules_are_validated() {
     assert!(error("user:both").contains("二选一"));
     assert!(error("user:bad-time").contains("HH:MM"));
 }
+
+/// imgenai 分发版：账户拓展的后台用真实宿主跑起来，配置里的服务地址传得进去、登录令牌能在调用之间保留。
+#[tokio::test]
+async fn imgenai_account_backend_runs_under_the_real_host() {
+    use codex_plus_core::bundled_extensions::{IMGENAI_ACCOUNT_KEY, materialize};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    if codex_plus_core::dsh_plugins::locate_node().is_none() {
+        eprintln!("跳过：本机没有 Node");
+        return;
+    }
+    // 极简的模拟网站：登录给令牌，带令牌查订阅给数据，其余 401。
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let site = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else { break };
+            let mut buffer = vec![0u8; 8192];
+            let read = stream.read(&mut buffer).await.unwrap_or(0);
+            let request = String::from_utf8_lossy(&buffer[..read]).to_string();
+            let body = if request.starts_with("POST /api/auth/login") {
+                r#"{"success":true,"token":"t-1","user":{"id":1,"phone":"13800000000"}}"#
+            } else if request.starts_with("GET /api/relay/subscription") && request.contains("Bearer t-1") {
+                r#"{"success":true,"data":{"active":true,"tier":"paid","daily_cap_usd":35}}"#
+            } else {
+                ""
+            };
+            let status = if body.is_empty() { "401 Unauthorized" } else { "200 OK" };
+            let response = format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+            let _ = stream.write_all(response.as_bytes()).await;
+        }
+    });
+
+    let temp = tempfile::tempdir().unwrap();
+    materialize(&temp.path().join("bundled")).unwrap();
+    let manager = manager(&temp).with_bundled_dir(temp.path().join("bundled"));
+    manager.migrate_bundled_builtins(&codex_plus_core::settings::BackendSettings::default()).unwrap();
+    let mut values = serde_json::Map::new();
+    values.insert("siteBase".into(), json!(site));
+    manager.update_extension_config(IMGENAI_ACCOUNT_KEY, &values).unwrap();
+
+    with_extension_backend_cleanup(&[&manager], async {
+        let timeout = Duration::from_secs(15);
+        let state = call(&manager, IMGENAI_ACCOUNT_KEY, "state", json!(null), timeout, None).await.unwrap();
+        assert_eq!(state["ok"], true, "{state}");
+        assert_eq!(state["loggedIn"], false);
+        assert_eq!(state["site"], json!(site), "配置里的服务地址传进了后台");
+
+        let login = call(&manager, IMGENAI_ACCOUNT_KEY, "login", json!({ "phone": "13800000000", "password": "p" }), timeout, None).await.unwrap();
+        assert_eq!(login["ok"], true, "{login}");
+        let overview = call(&manager, IMGENAI_ACCOUNT_KEY, "overview", json!(null), timeout, None).await.unwrap();
+        assert_eq!(overview["ok"], true, "{overview}");
+        assert_eq!(overview["sub"]["daily_cap_usd"], 35, "登录令牌保存在数据目录、下次调用带上了");
+    })
+    .await;
+    server.abort();
+}

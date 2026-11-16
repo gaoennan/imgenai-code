@@ -683,6 +683,7 @@ codexPlus.extension({ inject: ["sessions", "sessionQuery"], async apply(ctx) {
 - `protocol`：`responses`（默认）/ `chat` / `anthropic`。`apiKey` 写字面值，或 `{ "config": "键" }` 引用拓展的 string 配置项
   （用户在拓展设置里填，Key 不写进代码）。`models` 至少一个；每个拓展最多 8 个供应商。
 - `"discoverModels": true`：从上游 `/models` 拉模型列表（10 分钟刷新一次），与 `models` 合并；这时 `models` 可以为空。
+- `"requiresKey": true`：Key 为空时这个供应商先不并入网关（比如要登录后才拿得到 Key），配置里有了 Key 再并入；默认不写时照常并入。
 - 只在构建 Agent 模型资料与网关路由时并入，不写进 `gateway.json`；与用户已有的同 id 供应商以用户的为准，
   写了 `"override": true` 时顶替用户的那个（位置不变）。拓展停用即消失、被顶替的恢复。
 - 要用代码实现一个供应商（用代码写供应商适配器）：在常驻后台里起一个本机 HTTP 服务实现 Chat / Responses 接口，

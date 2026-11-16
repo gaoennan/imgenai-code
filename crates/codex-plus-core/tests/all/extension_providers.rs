@@ -95,3 +95,33 @@ fn providers_with_override_replace_the_existing_one() {
     let restored = settings.with_extension_providers_from(&manager);
     assert_eq!(restored.providers[1].source, "user");
 }
+
+/// `prices`：按模型的价格（每百万 token、美元）；cachedInput 不写时等于 input；写错的拓展报错、不并入。
+#[test]
+fn provider_prices_are_parsed_and_validated() {
+    let temp = tempfile::tempdir().unwrap();
+    let manager = manager(&temp);
+    write_package(&temp, "priced", json!({
+        "providers": [{ "id": "priced", "baseUrl": "https://relay.example.com/v1", "models": ["a", "b"],
+                        "prices": { "a": { "input": 3.5, "cachedInput": 0.35, "output": 17.5 }, "b": { "input": 1, "output": 4 } } }]
+    }));
+    write_package(&temp, "bad-price", json!({
+        "providers": [{ "id": "bad", "baseUrl": "https://relay.example.com/v1", "models": ["a"], "prices": { "a": { "input": -1, "output": 2 } } }]
+    }));
+    write_package(&temp, "bad-prices-shape", json!({
+        "providers": [{ "id": "bad", "baseUrl": "https://relay.example.com/v1", "models": ["a"], "prices": ["a"] }]
+    }));
+    let inventory = manager.inventory().unwrap();
+    let error = |key: &str| inventory["scripts"].as_array().unwrap().iter().find(|item| item["key"] == key).unwrap()["error"].as_str().unwrap().to_string();
+    assert_eq!(error("user:priced"), "");
+    assert!(error("user:bad-price").contains("prices.a"), "{}", error("user:bad-price"));
+    assert!(error("user:bad-prices-shape").contains("prices"), "{}", error("user:bad-prices-shape"));
+
+    let providers = manager.enabled_extension_providers().unwrap();
+    let priced = &providers.iter().find(|(_, provider)| provider.id == "priced").unwrap().1;
+    let a = &priced.prices["a"];
+    assert_eq!((a.currency.as_str(), a.input, a.cached_input, a.output), ("USD", 3.5, 0.35, 17.5));
+    let b = &priced.prices["b"];
+    assert_eq!((b.input, b.cached_input, b.output), (1.0, 1.0, 4.0), "cachedInput 不写时等于 input");
+    assert!(providers.iter().all(|(_, provider)| provider.id != "bad"));
+}

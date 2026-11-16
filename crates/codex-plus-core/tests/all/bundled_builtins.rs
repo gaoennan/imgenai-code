@@ -396,11 +396,32 @@ fn imgenai_provider_is_written_into_the_pool_after_login() {
     assert_eq!(key_of(&entry.relay), "sk-one");
     assert!(entry.relay.model_list.lines().any(|model| model == "gpt-6.1-sol"));
     assert!(entry.enabled);
+    // 价格按 imgenai 服务端实扣（官方价 ×1.75，缓存/输出比例同服务端），用量页的费用与网页一致。
+    let astra = &entry.model_prices["gpt-6-astra"];
+    assert_eq!((astra.input, astra.cached_input, astra.output), (17.5, 1.75, 87.5));
+    assert_eq!(entry.model_prices["gpt-6.1-sol"].cached_input, 0.175, "6.1 系缓存是输入的 1/20");
+    assert_eq!(entry.model_prices["gpt-6"], entry.model_prices["gpt-6-astra"], "别名 gpt-6 → astra 同价");
+    assert_eq!(entry.model_prices["gpt-5.6"], entry.model_prices["gpt-5.6-sol"], "别名 gpt-5.6 → 5.6-sol 同价");
+    // 对账：11-16 实测 astra 一次（输入 25178、其中缓存 3712、输出 14）服务端扣 $0.3834。
+    let cost = ((25178.0 - 3712.0) * astra.input + 3712.0 * astra.cached_input + 14.0 * astra.output) / 1e6;
+    assert!((cost - 0.383376).abs() < 1e-9, "{cost}");
 
     // 再同步一次不重复写；路由时池里的这份顶掉拓展自己那份，不会出现两个 imgenai。
     assert_eq!(extension_pool::sync(&store, &manager).unwrap(), PoolSync::default());
     let runtime = store.load().unwrap().with_extension_providers_from(&manager);
     assert_eq!(runtime.providers.iter().filter(|provider| provider.relay.id == "imgenai").count(), 1);
+
+    // 价格被改过（旧版本按公开价补的、或手动改的）：同步时改回声明的价格。
+    store
+        .update(|gateway| {
+            let entry = gateway.providers.iter_mut().find(|entry| entry.source == source).unwrap();
+            entry.model_prices.get_mut("gpt-6-astra").unwrap().input = 10.0;
+            Ok(())
+        })
+        .unwrap();
+    assert!(extension_pool::sync(&store, &manager).unwrap().changed);
+    assert_eq!(pooled().pop().unwrap().model_prices["gpt-6-astra"].input, 17.5);
+    assert_eq!(extension_pool::sync(&store, &manager).unwrap(), PoolSync::default());
 
     // 重新获取密钥：只换 Key，用户在池里改的名字保留。
     let renamed = ProviderInput {

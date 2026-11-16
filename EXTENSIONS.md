@@ -687,6 +687,9 @@ codexPlus.extension({ inject: ["sessions", "sessionQuery"], async apply(ctx) {
 - `"pool": true`：拿到 Key 后写进用户的供应商池（`gateway.json`，来源记为 `extension-pool:<拓展 id>/<供应商 id>`），
   在管理器的供应商池里看得到、能编辑，接入 Agent 时也选得到它的模型；Key 变了只换 Key（用户改过的名字、模型、价格保留），
   Key 清空或拓展停用时移出池子。用户已经手动加过同一地址的供应商时不重复写。适合登录后才有 Key 的账户类拓展，通常与 `requiresKey` 一起用。
+- `"prices": { "模型": { "input": 3.5, "cachedInput": 0.35, "output": 17.5 } }`：按模型的价格（每百万 token、美元，`cachedInput` 不写时等于 `input`）。
+  配合 `pool` 使用：写进供应商池时作为这家的模型价格，之后每次同步发现不同就改回声明的值，用量页的费用就和服务商实际扣费一致
+  （服务商价格与公开价格表不同时用；没声明的模型照旧按公开价格表补）。
 - 只在构建 Agent 模型资料与网关路由时并入，不写进 `gateway.json`；与用户已有的同 id 供应商以用户的为准，
   写了 `"override": true` 时顶替用户的那个（位置不变）。拓展停用即消失、被顶替的恢复。
 - 要用代码实现一个供应商（用代码写供应商适配器）：在常驻后台里起一个本机 HTTP 服务实现 Chat / Responses 接口，

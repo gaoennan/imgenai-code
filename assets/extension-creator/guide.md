@@ -382,6 +382,7 @@ apiKey: { "config": "apiKey" }, models: [...] }]`，同时在 `config` 里声明
 上游有 `/models` 接口时可以写 `discoverModels: true` 自动拉模型列表。Key 要等用户填好才有时写 `requiresKey: true`，
 没填 Key 时这个供应商先不出现在模型列表里。要让它像手动添加的供应商一样出现在供应商池里（能编辑、接入时能选模型），
 再写 `pool: true`：有 Key 时写进池子，Key 清空或拓展停用时移出。
+服务商的实际价格和公开价不一样时，再写 `prices`（`{ "模型": { "input", "cachedInput", "output" } }`，每百万 token、美元），用量页的费用才和服务商扣费对得上。
 
 ## 拓展之间共享能力（服务）
 

@@ -2030,6 +2030,9 @@ pub struct ExtensionProvider {
     /// `pool: true`：拿到 Key 后写进用户的供应商池（gateway.json），像手动添加的供应商一样能在池里看到、编辑、选模型；
     /// Key 变了跟着换，Key 清空或拓展停用时移出池子。见 `gateway::extension_pool`。
     pub pool: bool,
+    /// `prices`：按模型的价格（每百万 token、美元），写进供应商池时作为这家的模型价格、之后每次同步都以它为准，
+    /// 用量页的费用就和服务商实际扣费一致（服务商价格与公开价不同时用）。
+    pub prices: BTreeMap<String, crate::gateway::store::ProviderPrice>,
 }
 
 /// 拓展的一条定时任务：每隔 `every_minutes` 分钟（或每天 `at` 时刻）调用后台方法 `method`。
@@ -2136,7 +2139,29 @@ fn parse_extension_providers(value: Option<&Value>, schema: &[ExtensionConfigFie
             let override_existing = item.get("override").and_then(Value::as_bool).unwrap_or(false);
             let requires_key = item.get("requiresKey").and_then(Value::as_bool).unwrap_or(false);
             let pool = item.get("pool").and_then(Value::as_bool).unwrap_or(false);
-            Ok(ExtensionProvider { name: if text("name").is_empty() { id.clone() } else { text("name") }, id, protocol, base_url, api_key, api_key_config, models, discover_models, override_existing, requires_key, pool })
+            let prices = match item.get("prices") {
+                None | Some(Value::Null) => BTreeMap::new(),
+                Some(Value::Object(table)) => table
+                    .iter()
+                    .map(|(model, price)| {
+                        let number = |name: &str| price.get(name).and_then(Value::as_f64).filter(|value| value.is_finite() && *value >= 0.0);
+                        let invalid = || format!("providers.{id}.prices.{model} 要写成 {{ \"input\": 数字, \"cachedInput\": 数字, \"output\": 数字 }}（每百万 token、美元，非负）");
+                        let input = number("input").with_context(invalid)?;
+                        let output = number("output").with_context(invalid)?;
+                        let cached_input = match price.get("cachedInput") {
+                            None => input,
+                            Some(_) => number("cachedInput").with_context(invalid)?,
+                        };
+                        let model = model.trim();
+                        if model.is_empty() {
+                            anyhow::bail!("providers.{id}.prices 的模型名不能为空");
+                        }
+                        Ok((model.to_string(), crate::gateway::store::ProviderPrice { currency: "USD".into(), input, cached_input, output }))
+                    })
+                    .collect::<anyhow::Result<BTreeMap<_, _>>>()?,
+                Some(_) => anyhow::bail!("providers.{id}.prices 要写成 {{ \"模型\": {{ \"input\", \"cachedInput\", \"output\" }} }}"),
+            };
+            Ok(ExtensionProvider { name: if text("name").is_empty() { id.clone() } else { text("name") }, id, protocol, base_url, api_key, api_key_config, models, discover_models, override_existing, requires_key, pool, prices })
         })
         .collect()
 }

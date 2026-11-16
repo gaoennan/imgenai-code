@@ -42,7 +42,20 @@
         "gpt-5.6-luna",
         "codex-auto-review"
       ],
-      "discoverModels": true
+      "discoverModels": true,
+      "prices": {
+        "gpt-6-astra": { "input": 17.5, "cachedInput": 1.75, "output": 87.5 },
+        "gpt-6": { "input": 17.5, "cachedInput": 1.75, "output": 87.5 },
+        "gpt-6.1-sol": { "input": 3.5, "cachedInput": 0.175, "output": 17.5 },
+        "gpt-6.1-terra": { "input": 1.75, "cachedInput": 0.0875, "output": 8.75 },
+        "gpt-6-sol": { "input": 3.5, "cachedInput": 0.35, "output": 17.5 },
+        "gpt-6-luna": { "input": 0.175, "cachedInput": 0.0175, "output": 0.875 },
+        "gpt-5.6-sol": { "input": 8.75, "cachedInput": 0.875, "output": 52.5 },
+        "gpt-5.6": { "input": 8.75, "cachedInput": 0.875, "output": 52.5 },
+        "gpt-5.6-terra": { "input": 3.5, "cachedInput": 0.35, "output": 21 },
+        "gpt-5.6-luna": { "input": 0.35, "cachedInput": 0.035, "output": 2.1 },
+        "codex-auto-review": { "input": 0.35, "cachedInput": 0.035, "output": 2.1 }
+      }
     }
   ]
 }

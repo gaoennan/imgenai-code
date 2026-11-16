@@ -5,7 +5,9 @@
 //! 「登录了就出现在供应商池里」，所以写成真正的池成员：
 //! - 第一次拿到 Key：按声明新建，来源记为 `extension-pool:<拓展 id>/<供应商 id>`；
 //!   用户已经手动加过同一地址的供应商时不重复建。
-//! - Key 变了：只换 Key，用户在池里改过的名字、模型、价格等都保留。
+//! - Key 变了：只换 Key，用户在池里改过的名字、模型等都保留。
+//! - 声明了 `prices` 的模型：价格以声明为准（新建时写入，之后每次同步发现不同就改回），
+//!   用量页按它算的费用与服务商实际扣费一致；没声明的模型照旧按公开价格表补。
 //! - Key 清空（退出登录）、拓展停用或删除：从池里移除（连同 Agent 里指向它的模型，同手动删除）。
 //!
 //! 池里有了同 id 的成员，路由时拓展自己的那份就不再并入（以池里的为准），不会出现两份。
@@ -55,21 +57,37 @@ pub fn sync(store: &GatewayStore, manager: &UserScriptManager) -> anyhow::Result
         let gateway = store.load()?;
         let key = provider.api_key.trim();
         if let Some(existing) = gateway.providers.iter().find(|entry| entry.source == *source) {
-            if current_key(&existing.relay) == key {
-                continue;
+            let id = existing.relay.id.clone();
+            if current_key(&existing.relay) != key {
+                let relay = &existing.relay;
+                let input = ProviderInput {
+                    name: relay.name.clone(),
+                    base_url: relay.base_url.clone(),
+                    protocol: relay.protocol,
+                    keys: vec![key.to_string()],
+                    model: relay.model.clone(),
+                    model_list: relay.model_list.clone(),
+                    ..ProviderInput::default()
+                };
+                apply::update_provider(store, &id, &input)?;
+                outcome.changed = true;
             }
-            let relay = &existing.relay;
-            let input = ProviderInput {
-                name: relay.name.clone(),
-                base_url: relay.base_url.clone(),
-                protocol: relay.protocol,
-                keys: vec![key.to_string()],
-                model: relay.model.clone(),
-                model_list: relay.model_list.clone(),
-                ..ProviderInput::default()
-            };
-            apply::update_provider(store, &relay.id, &input)?;
-            outcome.changed = true;
+            // 声明了价格的以声明为准：服务商调价后跟着新版拓展更新，用量页的费用与服务商扣费保持一致。
+            let stale_prices = provider
+                .prices
+                .iter()
+                .any(|(model, price)| existing.model_prices.get(model) != Some(price));
+            if stale_prices {
+                store.update(|gateway| {
+                    if let Some(entry) = gateway.providers.iter_mut().find(|entry| entry.relay.id == id) {
+                        for (model, price) in &provider.prices {
+                            entry.model_prices.insert(model.clone(), price.clone());
+                        }
+                    }
+                    Ok(())
+                })?;
+                outcome.changed = true;
+            }
             continue;
         }
         if gateway.providers.iter().any(|entry| same_url(&entry.relay.base_url, &provider.base_url)) {
@@ -82,6 +100,7 @@ pub fn sync(store: &GatewayStore, manager: &UserScriptManager) -> anyhow::Result
             keys: vec![key.to_string()],
             model: provider.models.first().cloned().unwrap_or_default(),
             model_list: provider.models.join("\n"),
+            model_prices: (!provider.prices.is_empty()).then(|| provider.prices.clone()),
             ..ProviderInput::default()
         };
         let (_, id) = apply::create_provider(store, &input, source, None)?;

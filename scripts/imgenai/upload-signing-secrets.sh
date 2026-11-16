@@ -17,8 +17,13 @@ gh auth status >/dev/null 2>&1 || { echo "先运行 gh auth login 登录 GitHub"
 [ -f "$DIR/developer-id.key" ] || { echo "找不到私钥 $DIR/developer-id.key" >&2; exit 1; }
 CER="$(ls -t "$DIR"/*.cer 2>/dev/null | head -1 || true)"
 [ -n "$CER" ] || { echo "找不到证书：把 Apple 开发者网站下载的 .cer 放进 $DIR" >&2; exit 1; }
+# 浏览器下载的 API 密钥默认在「下载」文件夹：挪进签名目录（仅本人可读），下载文件夹里不留副本。
+for found in "$HOME/Downloads"/AuthKey_*.p8; do
+  [ -f "$found" ] || continue
+  mv "$found" "$DIR/" && chmod 600 "$DIR/$(basename "$found")"
+done
 P8="$(ls -t "$DIR"/AuthKey_*.p8 2>/dev/null | head -1 || true)"
-[ -n "$P8" ] || { echo "找不到公证用的 API 密钥：把 AuthKey_*.p8 放进 $DIR" >&2; exit 1; }
+[ -n "$P8" ] || { echo "找不到公证用的 API 密钥：在 App Store Connect 下载 AuthKey_*.p8（会存到「下载」文件夹）" >&2; exit 1; }
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP:?}"' EXIT
@@ -41,8 +46,10 @@ openssl pkcs12 -help 2>&1 | grep -q -- "-legacy" && LEGACY="-legacy"
 openssl pkcs12 -export $LEGACY -inkey "$DIR/developer-id.key" -in "$TMP/cert.pem" -out "$TMP/cert.p12" \
   -passout "pass:$P12_PASSWORD" -name "$IDENTITY" -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1
 
-read -r -p "App Store Connect API 密钥的 Key ID：" KEY_ID
-read -r -p "Issuer ID：" ISSUER_ID
+# Key ID / Issuer ID 不是机密，可经环境变量传入；没传时从文件名取 Key ID、再问 Issuer ID。
+KEY_ID="${IMGENAI_ASC_KEY_ID:-$(basename "$P8" .p8 | sed 's/^AuthKey_//')}"
+ISSUER_ID="${IMGENAI_ASC_ISSUER_ID:-}"
+[ -n "$ISSUER_ID" ] || read -r -p "Issuer ID：" ISSUER_ID
 [ -n "$KEY_ID" ] && [ -n "$ISSUER_ID" ] || { echo "Key ID 和 Issuer ID 都要填" >&2; exit 1; }
 
 base64 -i "$TMP/cert.p12" | gh secret set MACOS_CERT_P12 --repo "$REPO"

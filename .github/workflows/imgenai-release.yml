@@ -125,6 +125,9 @@ jobs:
     env:
       MACOSX_DEPLOYMENT_TARGET: "12.0"
       VERSION: ${{ needs.prepare.outputs.version }}
+      # 仓库里配了 Developer ID 证书就正式签名并公证，没配就 ad-hoc 签名（用户首次打开要手动放行）。
+      HAS_SIGNING: ${{ secrets.MACOS_CERT_P12 != '' && secrets.MACOS_SIGNING_IDENTITY != '' }}
+      HAS_NOTARY: ${{ secrets.APPLE_API_KEY_P8 != '' && secrets.APPLE_API_KEY_ID != '' && secrets.APPLE_API_ISSUER_ID != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -149,13 +152,59 @@ jobs:
           name: macos-bin-aarch64-apple-darwin
           path: ${{ runner.temp }}/src/target/aarch64-apple-darwin/release
 
-      # 还没有 Apple 开发者账号：不设 MACOS_SIGNING_IDENTITY，package-dmg.sh 走 ad-hoc 签名、跳过公证。
-      # 有了账号后照上游 release-assets.yml 的 macos-dmg 任务，加导入证书与公证凭据两步即可。
+      # 证书导入与公证凭据的写法照搬上游 release-assets.yml 的 macos-dmg 任务。
+      - name: Import Developer ID certificate
+        if: env.HAS_SIGNING == 'true'
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # 临时钥匙串，不碰 runner 自带的，job 结束随机器销毁；密码现生成。
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          # 少了这一步 codesign 会弹授权框然后挂住直到超时。
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/cert.p12"
+          # runner 的系统钥匙串里没有 Developer ID G2 中间证书，缺了它身份列不出来。
+          curl -fsSL -o "$RUNNER_TEMP/DeveloperIDG2CA.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k "$KEYCHAIN" -T /usr/bin/codesign
+          security find-identity -v -p codesigning
+
+      - name: Store notarization credentials
+        if: env.HAS_SIGNING == 'true' && env.HAS_NOTARY == 'true'
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          echo "$APPLE_API_KEY_P8" | base64 --decode > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          xcrun notarytool store-credentials "imgenai-notary" --key "$KEY_PATH" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID"
+          rm -f "$KEY_PATH"
+          echo "MACOS_NOTARY_PROFILE=imgenai-notary" >> "$GITHUB_ENV"
+
       - name: Build universal DMG
         working-directory: ${{ runner.temp }}/src
         env:
           UNIVERSAL_SKIP_BUILD: "1"
+          SIGNING_IDENTITY_SECRET: ${{ secrets.MACOS_SIGNING_IDENTITY }}
         run: |
+          set -euo pipefail
+          if [ "$HAS_SIGNING" = "true" ]; then
+            export MACOS_SIGNING_IDENTITY="$SIGNING_IDENTITY_SECRET"
+            echo "正式签名：$MACOS_SIGNING_IDENTITY；公证：${MACOS_NOTARY_PROFILE:-未配置}"
+          else
+            echo "未配置 Developer ID 证书：ad-hoc 签名，跳过公证"
+          fi
           chmod +x target/*-apple-darwin/release/codex-plus-plus target/*-apple-darwin/release/codex-plus-legacy-shim
           bash scripts/installer/macos/build-universal.sh "$VERSION"
           ls -la dist/macos/*.dmg

@@ -26,6 +26,32 @@ bash scripts/imgenai/build-macos.sh
 
 可选环境变量：`IMGENAI_UPDATE_REPO`（自动更新读取的 GitHub 仓库，默认 `imgenai/imgenai-code`）、`IMGENAI_AD_LIST_URL`（首页推荐位，默认 `https://imgenai.net/desktop/ads.json`）。
 
+## 发版
+
+仓库：<https://github.com/gaoennan/imgenai-code>（公开，同时满足 AGPL 公开源码的要求）。上游自带的工作流在这个仓库里都已停用，只用 `.github/workflows/imgenai-release.yml`。
+
+```bash
+git tag imgenai-v1.0.1
+git push origin imgenai-v1.0.1
+```
+
+推标签后云端构建 macOS 通用 DMG 与 Windows 安装包、生成 `latest.json`，**停在草稿**（只有仓库成员看得到）。确认安装包没问题后在 GitHub 网页上把草稿发布（勾选 Latest），客户端的「检查更新」才会读到这一版。
+
+### macOS 正式签名与公证
+
+仓库 Secrets 里配了下面几项时，macOS 包会用 Developer ID 正式签名并提交 Apple 公证；没配时 ad-hoc 签名（用户首次打开要在「系统设置 → 隐私与安全性」里放行）。
+
+| Secret | 内容 |
+| --- | --- |
+| `MACOS_CERT_P12` | 「Developer ID Application」证书导出的 .p12，base64 编码 |
+| `MACOS_CERT_PASSWORD` | 导出 .p12 时设的密码 |
+| `MACOS_SIGNING_IDENTITY` | 证书全名，如 `Developer ID Application: 名字 (团队ID)` |
+| `APPLE_API_KEY_P8` | App Store Connect API 密钥 .p8，base64 编码 |
+| `APPLE_API_KEY_ID` | 该密钥的 Key ID |
+| `APPLE_API_ISSUER_ID` | Issuer ID |
+
+版本号是 imgenai Code 自己的（从 1.0.0 起），由 `prepare-src.mjs --version` 在构建副本里写进所有带版本号的文件，源码里仍是上游的版本号。客户端按数字逐段比较版本号，新版本号必须比已发布的大。
+
 ## 合并上游更新
 
 ```bash

@@ -319,6 +319,8 @@ pub fn run() {
             // 旧条目会指向不存在的路径，启动时按当前程序与拓展同步一次。没有拓展钩子时只读不写。
             tauri::async_runtime::spawn_blocking(|| {
                 codex_plus_core::extension_hooks::sync_default(&commands::default_user_script_manager());
+                // 拓展写进供应商池的供应商（如 imgenai 账户登录后的 imgenai）：按当前登录状态补上或移除。
+                gateway_commands::sync_extension_pool();
             });
             codex_plus_core::settings::set_external_settings_change_listener(
                 gateway_commands::notify_settings_changed,

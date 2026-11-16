@@ -2027,6 +2027,9 @@ pub struct ExtensionProvider {
     pub override_existing: bool,
     /// `requiresKey: true`：Key 为空时不并入网关（比如要登录后才拿得到 Key 的供应商），免得列出一排必然 401 的模型。
     pub requires_key: bool,
+    /// `pool: true`：拿到 Key 后写进用户的供应商池（gateway.json），像手动添加的供应商一样能在池里看到、编辑、选模型；
+    /// Key 变了跟着换，Key 清空或拓展停用时移出池子。见 `gateway::extension_pool`。
+    pub pool: bool,
 }
 
 /// 拓展的一条定时任务：每隔 `every_minutes` 分钟（或每天 `at` 时刻）调用后台方法 `method`。
@@ -2132,7 +2135,8 @@ fn parse_extension_providers(value: Option<&Value>, schema: &[ExtensionConfigFie
             }
             let override_existing = item.get("override").and_then(Value::as_bool).unwrap_or(false);
             let requires_key = item.get("requiresKey").and_then(Value::as_bool).unwrap_or(false);
-            Ok(ExtensionProvider { name: if text("name").is_empty() { id.clone() } else { text("name") }, id, protocol, base_url, api_key, api_key_config, models, discover_models, override_existing, requires_key })
+            let pool = item.get("pool").and_then(Value::as_bool).unwrap_or(false);
+            Ok(ExtensionProvider { name: if text("name").is_empty() { id.clone() } else { text("name") }, id, protocol, base_url, api_key, api_key_config, models, discover_models, override_existing, requires_key, pool })
         })
         .collect()
 }

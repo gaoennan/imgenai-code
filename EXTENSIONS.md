@@ -684,6 +684,9 @@ codexPlus.extension({ inject: ["sessions", "sessionQuery"], async apply(ctx) {
   （用户在拓展设置里填，Key 不写进代码）。`models` 至少一个；每个拓展最多 8 个供应商。
 - `"discoverModels": true`：从上游 `/models` 拉模型列表（10 分钟刷新一次），与 `models` 合并；这时 `models` 可以为空。
 - `"requiresKey": true`：Key 为空时这个供应商先不并入网关（比如要登录后才拿得到 Key），配置里有了 Key 再并入；默认不写时照常并入。
+- `"pool": true`：拿到 Key 后写进用户的供应商池（`gateway.json`，来源记为 `extension-pool:<拓展 id>/<供应商 id>`），
+  在管理器的供应商池里看得到、能编辑，接入 Agent 时也选得到它的模型；Key 变了只换 Key（用户改过的名字、模型、价格保留），
+  Key 清空或拓展停用时移出池子。用户已经手动加过同一地址的供应商时不重复写。适合登录后才有 Key 的账户类拓展，通常与 `requiresKey` 一起用。
 - 只在构建 Agent 模型资料与网关路由时并入，不写进 `gateway.json`；与用户已有的同 id 供应商以用户的为准，
   写了 `"override": true` 时顶替用户的那个（位置不变）。拓展停用即消失、被顶替的恢复。
 - 要用代码实现一个供应商（用代码写供应商适配器）：在常驻后台里起一个本机 HTTP 服务实现 Chat / Responses 接口，

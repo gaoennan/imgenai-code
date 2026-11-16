@@ -13,8 +13,14 @@ test("「添加供应商」目录最前面是 imgenai，点开跳到 imgenai 账
   assert.ok(catalog.indexOf('key: "imgenai"') < catalog.indexOf('key: "subscription"'));
   assert.match(catalog, /const IMGENAI_ACCOUNT_EXTENSION = "bundled:imgenai-account";/);
   assert.match(catalog, /new CustomEvent\(MANAGER_NAVIGATE_EVENT, \{ detail: `ext:\$\{IMGENAI_ACCOUNT_EXTENSION\}` \}\)/);
-  // 已登录：拓展声明的供应商已在池里，目录里打「已添加」的点。
-  assert.match(catalog, /entry\.source === `extension:\$\{IMGENAI_ACCOUNT_EXTENSION\}`/);
+  // 已登录：拓展写进池里的供应商（来源与 Rust 侧 extension_pool::pool_source 一致），目录里打「已添加」的点。
+  assert.match(catalog, /const IMGENAI_POOL_SOURCE = "extension-pool:imgenai-account\/imgenai";/);
+  assert.match(catalog, /entry\.source === IMGENAI_POOL_SOURCE/);
+  const manifest = JSON.parse(read("../../../assets/extensions/imgenai-account/codexpp.json"));
+  assert.equal(manifest.id, "imgenai-account");
+  const provider = manifest.providers.find((item: { id: string }) => item.id === "imgenai");
+  assert.equal(provider.pool, true);
+  assert.equal(provider.requiresKey, true);
 });
 
 test("目录里的 imgenai 地址与拓展声明的供应商一致", () => {

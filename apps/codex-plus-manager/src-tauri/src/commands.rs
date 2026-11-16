@@ -7207,6 +7207,8 @@ pub fn set_user_scripts_enabled(enabled: bool, host: Option<String>) -> CommandR
     // 拓展声明的 Codex 钩子跟着拓展开关走：同步 Codex 配置里的分发条目（失败只记日志）。
     if !claude {
         codex_plus_core::extension_hooks::sync_default(&manager);
+        // 拓展写进供应商池的供应商跟着拓展开关走。
+        crate::gateway_commands::sync_extension_pool();
     }
     match result {
         Ok(_) => settings_payload(
@@ -7348,7 +7350,11 @@ pub fn set_extension_config(key: String, values: serde_json::Map<String, Value>)
         return failed("拓展 key 不能为空。", fallback_settings_payload());
     }
     match default_user_script_manager().set_extension_config(trimmed, &values) {
-        Ok(_) => settings_payload("拓展配置已保存。", "拓展配置保存失败"),
+        Ok(_) => {
+            // 账户类拓展登录 / 退出后 Key 变了：同步它写进供应商池的供应商。
+            crate::gateway_commands::sync_extension_pool();
+            settings_payload("拓展配置已保存。", "拓展配置保存失败")
+        }
         Err(error) => failed(&format!("拓展配置保存失败：{error:#}"), fallback_settings_payload()),
     }
 }
@@ -7387,6 +7393,8 @@ pub fn set_user_script_enabled(key: String, enabled: bool, host: Option<String>)
     };
     if !claude {
         codex_plus_core::extension_hooks::sync_default(&manager);
+        // 拓展写进供应商池的供应商跟着拓展开关走。
+        crate::gateway_commands::sync_extension_pool();
     }
     match result {
         Ok(_) => settings_payload(

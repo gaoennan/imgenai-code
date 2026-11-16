@@ -358,6 +358,98 @@ fn imgenai_provider_uses_the_key_saved_after_login() {
     assert!(manager.enabled_extension_providers().unwrap().iter().all(|(extension, _)| extension != "imgenai-account"));
 }
 
+/// 登录后 imgenai 写进供应商池（管理器里看得到、接入时选得到模型）；换 Key 只换 Key；退出登录、停用拓展后移出。
+#[test]
+fn imgenai_provider_is_written_into_the_pool_after_login() {
+    use codex_plus_core::gateway::apply::{self, ProviderInput};
+    use codex_plus_core::gateway::extension_pool::{self, PoolSync};
+    use codex_plus_core::gateway::store::GatewayStore;
+
+    let temp = tempfile::tempdir().unwrap();
+    let manager = ready(temp.path());
+    manager.migrate_bundled_builtins(&BackendSettings::default()).unwrap();
+    let store = GatewayStore::at(temp.path().join("gateway.json"));
+    let source = "extension-pool:imgenai-account/imgenai";
+    let set_key = |key: &str| {
+        let mut values = Map::new();
+        values.insert("apiKey".into(), json!(key));
+        manager.update_extension_config(IMGENAI_ACCOUNT_KEY, &values).unwrap();
+    };
+    let pooled = || store.load().unwrap().providers.into_iter().filter(|entry| entry.source == source).collect::<Vec<_>>();
+    let key_of = |relay: &codex_plus_core::settings::RelayProfile| {
+        relay.api_keys.first().map(|entry| entry.api_key.clone()).unwrap_or_else(|| relay.api_key.clone())
+    };
+
+    // 没登录：什么都不写。
+    assert_eq!(extension_pool::sync(&store, &manager).unwrap(), PoolSync::default());
+    assert!(store.load().unwrap().providers.is_empty());
+
+    // 登录拿到 Key：写进池里，id 就是 imgenai（Codex 里的模型名 imgenai/…），声明了 discoverModels 的交给调用方去拉模型。
+    set_key("sk-one");
+    let first = extension_pool::sync(&store, &manager).unwrap();
+    assert!(first.changed);
+    assert_eq!(first.created, vec!["imgenai".to_string()]);
+    let entry = pooled().pop().expect("登录后写进供应商池");
+    assert_eq!(entry.relay.id, "imgenai");
+    assert_eq!(entry.relay.name, "imgenai");
+    assert_eq!(entry.relay.base_url, "https://api.imgenai.net/v1");
+    assert_eq!(key_of(&entry.relay), "sk-one");
+    assert!(entry.relay.model_list.lines().any(|model| model == "gpt-6.1-sol"));
+    assert!(entry.enabled);
+
+    // 再同步一次不重复写；路由时池里的这份顶掉拓展自己那份，不会出现两个 imgenai。
+    assert_eq!(extension_pool::sync(&store, &manager).unwrap(), PoolSync::default());
+    let runtime = store.load().unwrap().with_extension_providers_from(&manager);
+    assert_eq!(runtime.providers.iter().filter(|provider| provider.relay.id == "imgenai").count(), 1);
+
+    // 重新获取密钥：只换 Key，用户在池里改的名字保留。
+    let renamed = ProviderInput {
+        name: "我的 imgenai".into(),
+        base_url: entry.relay.base_url.clone(),
+        protocol: entry.relay.protocol,
+        keys: Vec::new(),
+        model: entry.relay.model.clone(),
+        model_list: entry.relay.model_list.clone(),
+        ..ProviderInput::default()
+    };
+    apply::update_provider(&store, "imgenai", &renamed).unwrap();
+    set_key("sk-two");
+    let second = extension_pool::sync(&store, &manager).unwrap();
+    assert!(second.changed && second.created.is_empty());
+    let entry = pooled().pop().unwrap();
+    assert_eq!(key_of(&entry.relay), "sk-two");
+    assert_eq!(entry.relay.name, "我的 imgenai");
+    assert_eq!(entry.relay.id, "imgenai");
+
+    // 退出登录（Key 清空）：移出池子。
+    set_key("");
+    assert!(extension_pool::sync(&store, &manager).unwrap().changed);
+    assert!(pooled().is_empty());
+
+    // 停用拓展也移出。
+    set_key("sk-three");
+    extension_pool::sync(&store, &manager).unwrap();
+    assert_eq!(pooled().len(), 1);
+    manager.set_script_enabled(IMGENAI_ACCOUNT_KEY, false).unwrap();
+    assert!(extension_pool::sync(&store, &manager).unwrap().changed);
+    assert!(pooled().is_empty());
+    manager.set_script_enabled(IMGENAI_ACCOUNT_KEY, true).unwrap();
+
+    // 用户自己手动加过同一地址的：不再重复写一份。
+    let manual = ProviderInput {
+        name: "手动 imgenai".into(),
+        base_url: "https://api.imgenai.net/v1/".into(),
+        keys: vec!["sk-manual".into()],
+        model: "gpt-6.1-sol".into(),
+        model_list: "gpt-6.1-sol".into(),
+        ..ProviderInput::default()
+    };
+    apply::create_provider(&store, &manual, "custom", None).unwrap();
+    assert!(!extension_pool::sync(&store, &manager).unwrap().changed);
+    assert!(pooled().is_empty());
+    assert_eq!(store.load().unwrap().providers.len(), 1);
+}
+
 #[test]
 fn imgenai_account_scripts_only_use_public_interfaces() {
     let files = imgenai_account_files();

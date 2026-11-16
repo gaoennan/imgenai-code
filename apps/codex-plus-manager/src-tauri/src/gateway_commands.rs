@@ -1714,6 +1714,32 @@ pub fn save_gateway_provider_models(
 }
 
 /// 添加供应商之后：同 [`refresh_agents`]，并在后台按公开价格表给新模型填好价格。
+/// 拓展声明了 `"pool": true` 的供应商写进供应商池（见 `gateway::extension_pool`）：
+/// 拓展配置保存、拓展启用 / 停用之后与启动时各同步一次。新建的成员随后在后台从上游拉一次模型列表。
+pub(crate) fn sync_extension_pool() {
+    let manager = crate::commands::default_user_script_manager();
+    match codex_plus_core::gateway::extension_pool::sync(&GatewayStore::default(), &manager) {
+        Ok(outcome) if outcome.changed => {
+            let _ = refresh_added(Ok(()));
+            for id in outcome.created {
+                tauri::async_runtime::spawn(async move {
+                    let result = model_sync::fetch_provider_models(&GatewayStore::default(), &id).await;
+                    if refresh_agents(result).is_ok() {
+                        autofill_prices(Some(id));
+                    }
+                });
+            }
+        }
+        Ok(_) => {}
+        Err(error) => {
+            let _ = codex_plus_core::diagnostic_log::append_diagnostic_log(
+                "gateway.extension_pool_sync_failed",
+                serde_json::json!({ "message": format!("{error:#}") }),
+            );
+        }
+    }
+}
+
 fn refresh_added<T>(result: anyhow::Result<T>) -> anyhow::Result<T> {
     if result.is_ok() {
         autofill_prices(None);

@@ -380,7 +380,8 @@ export default async function* (context, next) {
 apiKey: { "config": "apiKey" }, models: [...] }]`，同时在 `config` 里声明 `apiKey`（string、secret）。并入 Codex++ 网关后，
 模型名是 `<id>/<模型>`，要在网关模式下使用。Key 让用户在拓展设置里填，不要写进代码，也不要让用户把 Key 发进对话。
 上游有 `/models` 接口时可以写 `discoverModels: true` 自动拉模型列表。Key 要等用户填好才有时写 `requiresKey: true`，
-没填 Key 时这个供应商先不出现在模型列表里。
+没填 Key 时这个供应商先不出现在模型列表里。要让它像手动添加的供应商一样出现在供应商池里（能编辑、接入时能选模型），
+再写 `pool: true`：有 Key 时写进池子，Key 清空或拓展停用时移出。
 
 ## 拓展之间共享能力（服务）
 

@@ -292,7 +292,7 @@
     }
     state.sub = null;
     show("login-view");
-    api.toast?.("已退出登录，客户端密钥已清除");
+    api.toast?.("已退出登录，客户端密钥已清除，imgenai 已移出供应商池");
   });
 
   $("refresh-btn").addEventListener("click", () => refresh());
@@ -526,7 +526,7 @@
     const active = !!state.sub?.active;
     $("key-status").textContent = key ? `已配置（${key.slice(0, 6)}…${key.slice(-4)}）` : "未配置";
     $("key-hint").textContent = key
-      ? "在「网关 → 智能体」里给 Codex 打开接入，选 imgenai 开头的模型即可。"
+      ? "已自动加入供应商池。接入 Codex 后选 imgenai 开头的模型即可。"
       : active ? "点「重新获取密钥」自动配置。" : "开通订阅或领取试用后会自动配置。";
   }
 

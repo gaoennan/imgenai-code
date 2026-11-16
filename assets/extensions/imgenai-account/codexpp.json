@@ -30,6 +30,7 @@
       "baseUrl": "https://api.imgenai.net/v1",
       "apiKey": { "config": "apiKey" },
       "requiresKey": true,
+      "pool": true,
       "models": [
         "gpt-6.1-sol",
         "gpt-6-astra",

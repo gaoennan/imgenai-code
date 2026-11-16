@@ -36,6 +36,7 @@ pub mod connection_generation;
 pub mod diagnostics;
 pub mod disconnect_preview;
 pub mod drift;
+pub mod extension_pool;
 pub mod gemini_inbound;
 pub mod gemini_outbound;
 pub mod images;

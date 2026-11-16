@@ -495,13 +495,30 @@ async fn imgenai_account_backend_runs_under_the_real_host() {
     // 极简的模拟网站：登录给令牌，带令牌查订阅给数据，其余 401。
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let site = format!("http://{}", listener.local_addr().unwrap());
+    let site_for_server = site.clone();
     let server = tokio::spawn(async move {
+        let site = site_for_server;
         loop {
             let Ok((mut stream, _)) = listener.accept().await else { break };
             let mut buffer = vec![0u8; 8192];
             let read = stream.read(&mut buffer).await.unwrap_or(0);
             let request = String::from_utf8_lossy(&buffer[..read]).to_string();
-            let body = if request.starts_with("POST /api/auth/login") {
+            // 支付平台的二维码地址先 302 到真正的图片（虎皮椒 qrcode_v3 就是这样），后台要跟过去。
+            if request.starts_with("GET /pay/qrcode ") {
+                let _ = stream.write_all(b"HTTP/1.1 302 Found\r\nLocation: /pay/qrcode.png?x=1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+                continue;
+            }
+            if request.starts_with("GET /pay/qrcode.png") {
+                let png: &[u8] = b"\x89PNG\r\n\x1a\nfake";
+                let head = format!("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", png.len());
+                let _ = stream.write_all(head.as_bytes()).await;
+                let _ = stream.write_all(png).await;
+                continue;
+            }
+            let order = format!(r#"{{"success":true,"data":{{"tradeOrderId":"o-1","paymentUrl":"{site}/pay/page","qrcodeUrl":"{site}/pay/qrcode"}}}}"#);
+            let body = if request.starts_with("POST /api/payment/create") && request.contains("Bearer t-1") {
+                order.as_str()
+            } else if request.starts_with("POST /api/auth/login") {
                 r#"{"success":true,"token":"t-1","user":{"id":1,"phone":"13800000000"}}"#
             } else if request.starts_with("GET /api/relay/subscription") && request.contains("Bearer t-1") {
                 r#"{"success":true,"data":{"active":true,"tier":"paid","daily_cap_usd":35}}"#
@@ -534,6 +551,13 @@ async fn imgenai_account_backend_runs_under_the_real_host() {
         let overview = call(&manager, IMGENAI_ACCOUNT_KEY, "overview", json!(null), timeout, None).await.unwrap();
         assert_eq!(overview["ok"], true, "{overview}");
         assert_eq!(overview["sub"]["daily_cap_usd"], 35, "登录令牌保存在数据目录、下次调用带上了");
+
+        // 下单：二维码地址 302 之后才是图片，后台跟过去转成 data URL（面板页不放行外部图片）。
+        let order = call(&manager, IMGENAI_ACCOUNT_KEY, "createOrder", json!({ "kind": "subscription", "plan": "paid" }), timeout, None).await.unwrap();
+        assert_eq!(order["ok"], true, "{order}");
+        assert_eq!(order["tradeOrderId"], "o-1");
+        assert!(order["qrDataUrl"].as_str().unwrap_or("").starts_with("data:image/png;base64,"), "{order}");
+        assert_eq!(order["paymentUrl"], json!(format!("{site}/pay/page")));
     })
     .await;
     server.abort();

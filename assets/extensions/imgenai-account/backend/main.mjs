@@ -164,12 +164,22 @@ export default ({ config, dataDir, log }) => {
   }
 
   /** 支付二维码是网站给的图片地址；管理器面板只能显示 data URL，这里下载后转成 data URL。 */
+  /** 二维码图片转成 data URL（面板页的 CSP 不放行外部图片）。支付平台的二维码地址会先 302 到真正的图片，跟最多 3 次跳转。 */
   async function imageDataUrl(url) {
-    if (!/^https?:\/\//i.test(String(url || ""))) return "";
-    const response = await rawRequest("GET", url, { headers: { Accept: "image/*" }, maxBytes: MAX_IMAGE_BYTES });
-    const type = String(response.headers["content-type"] || "").split(";")[0].trim();
-    if (response.status !== 200 || !type.startsWith("image/")) return "";
-    return `data:${type};base64,${response.body.toString("base64")}`;
+    let current = String(url || "");
+    for (let hop = 0; hop <= 3; hop += 1) {
+      if (!/^https?:\/\//i.test(current)) return "";
+      const response = await rawRequest("GET", current, { headers: { Accept: "image/*" }, maxBytes: MAX_IMAGE_BYTES });
+      const location = response.headers.location;
+      if ([301, 302, 303, 307, 308].includes(response.status) && location) {
+        current = new URL(String(location), current).toString();
+        continue;
+      }
+      const type = String(response.headers["content-type"] || "").split(";")[0].trim();
+      if (response.status !== 200 || !type.startsWith("image/")) return "";
+      return `data:${type};base64,${response.body.toString("base64")}`;
+    }
+    return "";
   }
 
   async function listTokens() {

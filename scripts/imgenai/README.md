@@ -12,6 +12,7 @@ imgenai Code 是在开源项目 [Codex++](https://github.com/BigPizzaV3/CodexPlu
 | 拓展供应商 `pool` | `crates/codex-plus-core/src/gateway/extension_pool.rs`，调用点在管理器的 `set_extension_config`、拓展开关与启动时 | 登录拿到密钥后把 imgenai 写进供应商池（看得到、能选模型），退出登录时移出 |
 | 「添加供应商」目录的 imgenai 入口 | `apps/codex-plus-manager/src/GatewayProviders.tsx` | 点开跳到「imgenai 账户」页；构建时 `rebrand.mjs` 清掉上游赞助商（同行中转站） |
 | 改名为 imgenai Code | `scripts/imgenai/rebrand.mjs` | **只在构建副本上执行**，源码分支保持上游写法 |
+| 仓库首页 | `.github/README.md`、`README_EN.md`、`CONTRIBUTING.md`、`imgenai/hero.svg` | GitHub 优先显示 `.github/` 里的这几份；根目录同名文件保持上游原样，合并时不冲突 |
 | 临时品牌图标 | `scripts/imgenai/brand/` | `make-icons.py` 生成，换正式图标时直接替换这几个文件 |
 
 改名不提交进源码，是为了合并上游更新时不冲突：界面里约 2000 处「Codex++」，上游几乎每个版本都会改到其中一些。
@@ -26,7 +27,7 @@ bash scripts/imgenai/build-macos.sh
 
 没有设置 `MACOS_SIGNING_IDENTITY` 时是 ad-hoc 签名，用户第一次打开要在「系统设置 → 隐私与安全性」里放行。
 
-可选环境变量：`IMGENAI_UPDATE_REPO`（自动更新读取的 GitHub 仓库，默认 `imgenai/imgenai-code`）、`IMGENAI_AD_LIST_URL`（首页推荐位，默认 `https://imgenai.net/desktop/ads.json`）。
+可选环境变量：`IMGENAI_UPDATE_REPO`（自动更新读取的 GitHub 仓库，默认 `gaoennan/imgenai-code`）、`IMGENAI_AD_LIST_URL`（首页推荐位，默认 `https://imgenai.net/desktop/ads.json`）。
 
 ## 发版
 

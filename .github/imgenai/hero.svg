@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="320" viewBox="0 0 1200 320" fill="none">
+  <title>imgenai Code</title>
+  <desc>imgenai 的桌面客户端：登录 imgenai 账户，Codex 直接开用。</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="320" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#120F2E"/><stop offset="1" stop-color="#261C5E"/>
+    </linearGradient>
+    <linearGradient id="hex" x1="860" y1="50" x2="1060" y2="270" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5D5BF2"/><stop offset="1" stop-color="#8B5CF6"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="960" cy="160" r="230" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7C6CFF" stop-opacity=".35"/><stop offset="1" stop-color="#7C6CFF" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="dots" width="24" height="24" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="1" fill="#B9AEFF" fill-opacity=".12"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="320" rx="20" fill="url(#bg)"/>
+  <rect x="680" width="520" height="320" rx="20" fill="url(#dots)"/>
+  <circle cx="960" cy="160" r="230" fill="url(#glow)"/>
+  <rect x="56" y="48" width="4" height="20" rx="2" fill="#9B8CFF"/>
+  <text x="73" y="63" fill="#B4ACD8" font-family="system-ui, -apple-system, sans-serif" font-size="13" letter-spacing="3">IMGENAI DESKTOP</text>
+  <text x="54" y="146" fill="#F5F3FF" font-family="system-ui, -apple-system, sans-serif" font-size="66" font-weight="750" letter-spacing="-2">imgenai <tspan fill="#A99BFF">Code</tspan></text>
+  <text x="56" y="206" fill="#ECE9FA" font-family="system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="34" font-weight="600">登录 imgenai 账户，Codex 直接开用。</text>
+  <text x="56" y="260" fill="#A49DC4" font-family="system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16">免填密钥 · 额度与充值在客户端里 · 用量和官网一致</text>
+  <polygon points="960,50 1055.3,105 1055.3,215 960,270 864.7,215 864.7,105" fill="url(#hex)"/>
+  <circle cx="926" cy="125" r="18" fill="#D4CCFF" fill-opacity=".85"/>
+  <circle cx="994" cy="125" r="18" fill="#D4CCFF" fill-opacity=".85"/>
+  <circle cx="960" cy="162" r="34" fill="#F3F0FF"/>
+  <circle cx="960" cy="205" r="18" fill="#D4CCFF" fill-opacity=".85"/>
+</svg>

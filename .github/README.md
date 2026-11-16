@@ -1,0 +1,101 @@
+<!-- 仓库首页。GitHub 优先显示 .github/README.md，根目录的 README.md 保持上游原样，合并上游更新时不冲突。 -->
+<p align="center">
+  <img src="imgenai/hero.svg" alt="imgenai Code：登录 imgenai 账户，Codex 直接开用。" width="100%">
+</p>
+
+<p align="center">
+  <strong>imgenai 的桌面客户端。</strong><br>
+  不用复制密钥、不用改配置文件，订阅额度、充值和用量都在客户端里。
+</p>
+
+<p align="center">
+  <a href="https://github.com/gaoennan/imgenai-code/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-8b7cf6?style=flat-square" alt="许可证 AGPL-3.0"></a>
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-8b7cf6?style=flat-square" alt="支持 macOS 和 Windows">
+  <img src="https://img.shields.io/badge/based%20on-Codex%2B%2B-838da8?style=flat-square" alt="基于 Codex++">
+</p>
+
+<p align="center">
+  <a href="https://github.com/gaoennan/imgenai-code/releases"><strong>下载最新版 ↗</strong></a> &nbsp; · &nbsp;
+  <a href="https://imgenai.net">imgenai 官网</a> &nbsp; · &nbsp;
+  <a href="#快速上手">快速上手</a> &nbsp; · &nbsp;
+  <a href="#常见问题">常见问题</a> &nbsp; · &nbsp;
+  <a href="README_EN.md">English</a>
+</p>
+
+imgenai Code 是 [imgenai](https://imgenai.net) 的桌面客户端，在开源项目 [Codex++](https://github.com/BigPizzaV3/CodexPlusPlus) 的基础上修改而来。登录 imgenai 账户后，客户端自动取得专用密钥并把 imgenai 加进供应商池，Codex 里选 imgenai 的模型就能直接用。Codex++ 原有的本地网关、会话管理、Codex 界面增强等功能全部保留。
+
+## 多了什么
+
+| 功能 | 说明 |
+| --- | --- |
+| **登录即用** | 用 imgenai.net 的手机号登录，客户端自动创建「桌面客户端」专用密钥并写进供应商池，不用手抄密钥 |
+| **额度与充值** | 查看订阅档位、今日已用和剩余额度；订阅、加油包扫码支付；使用重置卡、开通免费试用 |
+| **用量对得上** | 客户端「用量」页按 imgenai 的价格计费，和官网扣费一致 |
+| **Max 与 Ultra 档位** | Codex 的推理强度里补上 Max 和 Ultra |
+| **旧对话照常打开** | 接入后，以前用其他供应商建的对话不会报「提供商已移除配置」 |
+| **首轮不卡顿** | 上游不支持 WebSocket 时自动改走 HTTP，Codex 不再等十几秒才出字 |
+| **微信连接** | 扫码把微信接到本机 Codex |
+
+继承自 Codex++ 的部分：50 多个 Agent 共用一份供应商池的本地网关、Codex 与 Claude Code 的会话管理、Codex 界面增强与多开、拓展、Computer Use 共享等，介绍见 [Codex++ 项目主页](https://github.com/BigPizzaV3/CodexPlusPlus)。
+
+## 快速上手
+
+**1. 下载安装包**：前往 [Releases](https://github.com/gaoennan/imgenai-code/releases)。
+
+| 你的设备 | 安装包 |
+| --- | --- |
+| macOS · Apple 芯片 / Intel | `imgenaiCode-版本号-macos-universal.dmg` |
+| Windows · x64 | `imgenaiCode-版本号-windows-x64-setup.exe`，免安装版为 `-windows-x64.zip` |
+
+**2. 登录账户**：打开 imgenai Code，进入侧栏「聚合网关 → imgenai 账户」，用 imgenai.net 的手机号和密码登录。还没有账号的话先到 [官网](https://imgenai.net) 注册。
+
+**3. 开通订阅**：账户页里选档位扫码支付，或先开通免费试用。开通后 imgenai 会自动出现在「供应商池」里。
+
+**4. 接入 Codex**：在「Agent 接入」里打开 Codex，默认模型选 imgenai 开头的模型，再点「启动 Codex」。
+
+## 常见问题
+
+<details>
+  <summary><strong>Windows 提示「Windows 已保护你的电脑」怎么办？</strong></summary>
+
+Windows 安装包暂未做代码签名，点「更多信息」，再点「仍要运行」即可。macOS 安装包已经过 Apple 签名与公证，双击就能打开。
+
+</details>
+
+<details>
+  <summary><strong>想换回官方 ChatGPT 订阅怎么办？</strong></summary>
+
+在「Codex → 连接与供应商」顶部把「连接方式」切到「直连」，选官方登录后从客户端重启 Codex。之后想再用 imgenai，切回「经网关」即可。
+
+</details>
+
+<details>
+  <summary><strong>退出 imgenai Code 后，Codex 为什么连不上？</strong></summary>
+
+经网关接入时，Codex 指向本机网关，网关只在 imgenai Code 运行时可用，重新打开客户端就恢复。想在退出后自动用回直连，可以在「设置 → 网关」里打开「退出 imgenai Code 时恢复直连」。
+
+</details>
+
+<details>
+  <summary><strong>账号和密钥存在哪里？</strong></summary>
+
+客户端只保存网站返回的登录令牌，不保存密码；令牌和中转密钥都只存在本机，界面里只显示打码后的样子。退出登录后，imgenai 会从供应商池移除。
+
+</details>
+
+<details>
+  <summary><strong>怎么更新？</strong></summary>
+
+客户端会读取本仓库 Releases 里的新版本，在侧栏提示，点「安装」即可。也可以随时到 [Releases](https://github.com/gaoennan/imgenai-code/releases) 下载新版覆盖安装，配置与会话会保留。
+
+</details>
+
+## 反馈
+
+订阅、扣费、账户相关的问题请到 [imgenai 官网](https://imgenai.net) 联系客服。客户端的问题可以在本仓库提 [Issue](https://github.com/gaoennan/imgenai-code/issues)，附上系统、imgenai Code 版本和复现步骤，贴日志前请隐去密钥、令牌和手机号。
+
+## 开源与许可
+
+imgenai Code 基于 [Codex++](https://github.com/BigPizzaV3/CodexPlusPlus) 修改，按 [GNU AGPL v3.0](https://github.com/gaoennan/imgenai-code/blob/main/LICENSE) 公开全部源码，第三方组件的许可见 [THIRD_PARTY_NOTICES.md](https://github.com/gaoennan/imgenai-code/blob/main/THIRD_PARTY_NOTICES.md)。和上游的差别集中在 [scripts/imgenai](https://github.com/gaoennan/imgenai-code/tree/main/scripts/imgenai) 与 `assets/extensions/imgenai-account`。感谢 Codex++ 的作者与贡献者。
+
+本项目与 OpenAI 无关，不授予 OpenAI、ChatGPT、Codex 等商标的任何权利。

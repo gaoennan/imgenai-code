@@ -36,7 +36,7 @@ KEY_MOD="$(openssl rsa -noout -modulus -in "$DIR/developer-id.key" 2>/dev/null |
 IDENTITY="$(openssl x509 -noout -subject -nameopt multiline -in "$TMP/cert.pem" | sed -n 's/^ *commonName *= *//p')"
 case "$IDENTITY" in
   "Developer ID Application:"*) ;;
-  *) echo "这张证书不是 Developer ID Application（是：$IDENTITY）" >&2; exit 1 ;;
+  *) echo "这张证书不是 Developer ID Application（是：${IDENTITY}）" >&2; exit 1 ;;
 esac
 
 # 合成 .p12：密码随机生成；用旧式加密算法，macOS 的 security import 才认得（OpenSSL 3 默认算法它不认）。
@@ -59,5 +59,5 @@ base64 -i "$P8" | gh secret set APPLE_API_KEY_P8 --repo "$REPO"
 printf '%s' "$KEY_ID" | gh secret set APPLE_API_KEY_ID --repo "$REPO"
 printf '%s' "$ISSUER_ID" | gh secret set APPLE_API_ISSUER_ID --repo "$REPO"
 
-echo "已存入 $REPO：签名身份「$IDENTITY」与公证密钥。下次推 imgenai-v* 标签，macOS 包就会正式签名并公证。"
+echo "已存入 ${REPO}：签名身份「${IDENTITY}」与公证密钥。下次推 imgenai-v* 标签，macOS 包就会正式签名并公证。"
 gh secret list --repo "$REPO"

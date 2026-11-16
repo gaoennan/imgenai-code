@@ -41,6 +41,8 @@ git push origin imgenai-v1.0.1
 
 仓库 Secrets 里配了下面几项时，macOS 包会用 Developer ID 正式签名并提交 Apple 公证；没配时 ad-hoc 签名（用户首次打开要在「系统设置 → 隐私与安全性」里放行）。
 
+已配置（2026-11-16）：证书「Developer ID Application: Ennan Gao (3W7Z852F27)」，2027-12-16 到期；公证用 App Store Connect API 密钥「imgenai Code notarization」（权限：开发者）。私钥、证书与 .p8 在本机 `~/Library/Application Support/imgenai-code-signing/`（仅本人可读，别放进 iCloud 同步的目录）。证书到期或要换机器时，用 `scripts/imgenai/upload-signing-secrets.sh` 重新上传。
+
 | Secret | 内容 |
 | --- | --- |
 | `MACOS_CERT_P12` | 「Developer ID Application」证书导出的 .p12，base64 编码 |

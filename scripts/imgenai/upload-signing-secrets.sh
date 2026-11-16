@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 把 macOS 签名与公证凭据存进 GitHub 仓库 Secrets（在你自己的 Mac 上运行一次）。
 #
-# 需要的文件都放在签名目录（默认 ~/Library/Caches/imgenai-code-build/signing）：
+# 需要的文件都放在签名目录（默认 ~/Library/Application Support/imgenai-code-signing，不会被清缓存也不进 iCloud）：
 #   developer-id.key   签名私钥（生成 CSR 时一起生成的）
 #   *.cer              Apple 开发者网站用 CSR 签发的「Developer ID Application」证书
 #   AuthKey_*.p8       App Store Connect API 密钥（公证用）
@@ -11,7 +11,7 @@
 set -euo pipefail
 
 REPO="${1:-gaoennan/imgenai-code}"
-DIR="${IMGENAI_SIGNING_DIR:-$HOME/Library/Caches/imgenai-code-build/signing}"
+DIR="${IMGENAI_SIGNING_DIR:-$HOME/Library/Application Support/imgenai-code-signing}"
 
 gh auth status >/dev/null 2>&1 || { echo "先运行 gh auth login 登录 GitHub" >&2; exit 1; }
 [ -f "$DIR/developer-id.key" ] || { echo "找不到私钥 $DIR/developer-id.key" >&2; exit 1; }

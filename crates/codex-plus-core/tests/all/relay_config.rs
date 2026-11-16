@@ -9071,3 +9071,61 @@ fn normalize_config_text_still_merges_repeated_standard_tables_last_wins() {
         Some(1)
     );
 }
+
+/// 「显示 Max / Ultra 档位」：启动前让 `[desktop] enabled-reasoning-efforts` 含 max、ultra。
+#[test]
+fn reasoning_effort_unlock_adds_max_and_ultra_to_desktop_efforts() {
+    use codex_plus_core::relay_config::ensure_max_ultra_reasoning_efforts_in_home;
+    let efforts = |home: &std::path::Path| -> Vec<String> {
+        let text = std::fs::read_to_string(home.join("config.toml")).unwrap();
+        let doc: toml::Value = toml::from_str(&text).unwrap();
+        doc["desktop"]["enabled-reasoning-efforts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap().to_string())
+            .collect()
+    };
+
+    // 没写过：按 Codex 默认档位再加 max；其余配置原样保留。
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::write(temp.path().join("config.toml"), "model = \"gpt-6-astra\"\n\n[desktop]\nopen-link-in-target-preference = \"external-browser\"\n").unwrap();
+    assert!(ensure_max_ultra_reasoning_efforts_in_home(temp.path()).unwrap());
+    assert_eq!(efforts(temp.path()), ["low", "medium", "high", "xhigh", "ultra", "persistent", "max"]);
+    let text = std::fs::read_to_string(temp.path().join("config.toml")).unwrap();
+    assert!(text.contains("model = \"gpt-6-astra\""), "{text}");
+    assert!(text.contains("open-link-in-target-preference = \"external-browser\""), "{text}");
+    // 再跑一次不改。
+    assert!(!ensure_max_ultra_reasoning_efforts_in_home(temp.path()).unwrap());
+
+    // 写过但没有 max / ultra：只追加缺的，用户关掉的别的档位（这里没有 xhigh）不补回。
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::write(temp.path().join("config.toml"), "[desktop]\nenabled-reasoning-efforts = [\"low\", \"high\"]\n").unwrap();
+    assert!(ensure_max_ultra_reasoning_efforts_in_home(temp.path()).unwrap());
+    assert_eq!(efforts(temp.path()), ["low", "high", "ultra", "max"]);
+
+    // 已经齐了：不改文件。
+    let temp = tempfile::tempdir().unwrap();
+    let complete = "[desktop]\nenabled-reasoning-efforts = [\"low\", \"medium\", \"high\", \"xhigh\", \"ultra\", \"persistent\", \"max\"]\n";
+    std::fs::write(temp.path().join("config.toml"), complete).unwrap();
+    assert!(!ensure_max_ultra_reasoning_efforts_in_home(temp.path()).unwrap());
+    assert_eq!(std::fs::read_to_string(temp.path().join("config.toml")).unwrap(), complete);
+
+    // 还没有 config.toml：新建一份只含这一项的。
+    let temp = tempfile::tempdir().unwrap();
+    assert!(ensure_max_ultra_reasoning_efforts_in_home(temp.path()).unwrap());
+    assert!(efforts(temp.path()).contains(&"max".to_string()));
+
+    // 格式异常（这一项不是数组）：不动。
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::write(temp.path().join("config.toml"), "[desktop]\nenabled-reasoning-efforts = \"max\"\n").unwrap();
+    assert!(!ensure_max_ultra_reasoning_efforts_in_home(temp.path()).unwrap());
+}
+
+#[test]
+fn reasoning_effort_unlock_is_on_by_default() {
+    let settings = codex_plus_core::settings::BackendSettings::default();
+    assert!(settings.codex_app_reasoning_effort_unlock);
+    let parsed: codex_plus_core::settings::BackendSettings = serde_json::from_str("{}").unwrap();
+    assert!(parsed.codex_app_reasoning_effort_unlock, "旧设置文件没有这一项时也按开");
+}

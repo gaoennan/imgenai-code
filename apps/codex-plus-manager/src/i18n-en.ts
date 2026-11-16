@@ -2802,6 +2802,8 @@ export const EN_PLAIN: Record<string, string> = {
   "粘贴修复": "Paste fix",
   "强制中文界面": "Force Chinese UI",
   "Statsig 界面增强": "Statsig UI enhancements",
+  "显示 Max / Ultra 档位": "Show Max / Ultra reasoning levels",
+  "Codex 默认不显示 Max；Ultra 要 OpenAI 的远程开关，国内网络拉不到时也会消失。开启后启动 Codex 前把 Max、Ultra 加进可选档位，并在拉不到远程开关时补开 Ultra；能正常拿到远程开关时不改远程数据。Ultra 会同时开多个子代理，消耗明显更快。关闭后重新启动 Codex 生效。": "Codex hides Max by default, and Ultra depends on an OpenAI remote flag that is unreachable from mainland China. When on, Max and Ultra are added to the available levels before Codex starts, and Ultra is re-enabled when the remote flags cannot be fetched; real remote flags are left untouched. Ultra runs several sub-agents at once and uses quota much faster. Restart Codex after turning it off.",
   "按上报用量判断压缩（实验）": "Use reported usage for compaction (experimental)",
   "仅对 Codex App 和 CLI 中已经经过本地代理的请求生效，按上报用量判断压缩，不改 usage，也不自动启用代理。开关变更在下一次响应后生效；旧会话首次响应前仍可能按原估算触发压缩。": "Only applies to Codex App and CLI requests already routed through the local proxy. Uses reported usage for compaction without changing usage or enabling the proxy. Switch changes take effect after the next response; older conversations may still compact from the original estimate before their first response.",
   "强制打开几项界面侧的远程开关：隐藏升级与额度推销提示、放宽网络重试与流式超时、补开记忆的 Statsig 开关。只影响本机界面与超时参数，云端能力与配额不受影响；关闭后重新启动 Codex 生效。": "Force a few client-side remote switches: hide upgrade and quota upsells, relax network retry and streaming timeouts, and turn on the Statsig switch for memories. Only local UI and timeout values change; cloud capabilities and quotas are unaffected. Restart Codex after turning this off.",

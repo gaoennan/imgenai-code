@@ -2606,7 +2606,7 @@
     // 引用 prelude 常量会直接 ReferenceError。与 00-prelude.js 里
     // capacityAutoRetryDefaultMaxAttempts / capacityAutoRetryDefaultIntervalSeconds 的一致性
     // 由 capacity-auto-retry.test.ts 的防漂移用例守住。
-    return { sideChatSave: false, pluginMarketplaceUnlock: true, modelWhitelistUnlock: true, sessionDelete: true, sessionDeleteSkipConfirm: false, markdownExport: true, pasteFix: false, offlineAutoReview: false, statsigOverrides: false, reportedUsageCompaction: false, threadIdBadge: false, conversationView: false, conversationViewMaxWidth: conversationViewDefaultWidth, threadScrollRestore: true, historyTurnRecovery: false, nativeMenuPlacement: true, nativeFastUnlock: false, petRealMouseLook: false, activityOverlayRight: false, stepwise: false, answerOutline: false, turnRewind: false, capacityAutoRetry: false, capacityAutoRetryMaxAttempts: 15, capacityAutoRetryIntervalSeconds: 0, dreamSkinEnabled: false, dreamSkinPaused: false, dreamSkinThemeConfig: window.__CODEX_PLUS_DREAM_SKIN_THEME__ || {}, dreamSkinImagePath: "" };
+    return { sideChatSave: false, pluginMarketplaceUnlock: true, modelWhitelistUnlock: true, sessionDelete: true, sessionDeleteSkipConfirm: false, markdownExport: true, pasteFix: false, offlineAutoReview: false, statsigOverrides: false, reasoningEffortUnlock: true, reportedUsageCompaction: false, threadIdBadge: false, conversationView: false, conversationViewMaxWidth: conversationViewDefaultWidth, threadScrollRestore: true, historyTurnRecovery: false, nativeMenuPlacement: true, nativeFastUnlock: false, petRealMouseLook: false, activityOverlayRight: false, stepwise: false, answerOutline: false, turnRewind: false, capacityAutoRetry: false, capacityAutoRetryMaxAttempts: 15, capacityAutoRetryIntervalSeconds: 0, dreamSkinEnabled: false, dreamSkinPaused: false, dreamSkinThemeConfig: window.__CODEX_PLUS_DREAM_SKIN_THEME__ || {}, dreamSkinImagePath: "" };
   }
 
   const codexPlusBackendSettingMap = {
@@ -2631,6 +2631,7 @@
     pasteFix: "codexAppPasteFix",
     offlineAutoReview: "codexAppOfflineAutoReview",
     statsigOverrides: "codexAppStatsigOverrides",
+    reasoningEffortUnlock: "codexAppReasoningEffortUnlock",
     reportedUsageCompaction: "codexAppReportedUsageCompaction",
     dreamSkinEnabled: "codexAppDreamSkinEnabled",
     dreamSkinPaused: "codexAppDreamSkinPaused",
@@ -2669,6 +2670,7 @@
         pasteFix: "paste-fix",
         offlineAutoReview: "offline-auto-review",
         statsigOverrides: "statsig-overrides",
+        reasoningEffortUnlock: "reasoning-effort-unlock",
         reportedUsageCompaction: "reported-usage-compaction",
         stepwise: "stepwise",
         answerOutline: "answer-outline",
@@ -2690,6 +2692,7 @@
         pasteFix: false,
         offlineAutoReview: false,
         statsigOverrides: false,
+        reasoningEffortUnlock: false,
         reportedUsageCompaction: false,
         threadIdBadge: false,
         conversationView: false,
@@ -6288,6 +6291,42 @@
     codexPlusStatsigOverridesTick();
     // 后端设置与 Statsig 客户端都可能晚于注入就绪：低频复查，已经接管过时是空操作。
     ctx.setInterval(codexPlusStatsigOverridesTick, 3000);
+  }
+  /**
+   * 内置拓展「显示 Max / Ultra 档位」。
+   *
+   * Codex 模型选择器里的档位有两道门：
+   * - Max：本地设置 `[desktop] enabled-reasoning-efforts` 默认不含 max。这一项由 Rust 侧在启动 Codex 前
+   *   补进 config.toml（relay_config::ensure_max_ultra_reasoning_efforts_in_home），页面侧不用管。
+   * - Ultra：要远程开关 multiAgentMode（闸门 1186680773）为开。这份数据由 OpenAI 后端下发，国内网络下拉不到时
+   *   Statsig 客户端 Ready 但没有任何数据，所有远程开关按关处理，Ultra 随之消失。
+   *
+   * 做法与「替我审批」（33-offline-auto-review.js）相同：只在客户端完全没有远程数据时补一份最小数据，
+   * 只多开 multiAgentMode 这一个闸门；拿到了真实数据（开了代理）就完全不碰。只写内存，关掉开关后重启 Codex 即恢复。
+   */
+  const codexPlusMultiAgentModeGate = "1186680773";
+
+  function codexPlusReasoningEffortUnlockEnabled() {
+    return codexPlusBackendSettingsLoaded === true && codexPlusSettings().reasoningEffortUnlock === true;
+  }
+
+  function codexPlusReasoningEffortUnlockTick() {
+    if (!codexPlusReasoningEffortUnlockEnabled()) return;
+    for (const client of codexPlusOfflineStatsigClients()) {
+      try {
+        if (codexPlusOfflineStatsigPatch(client, { [codexPlusMultiAgentModeGate]: true })) {
+          console.log("[ReasoningEffortUnlock]", "Statsig 没有远程数据，已补开 Ultra 档位（multiAgentMode）");
+        }
+      } catch (error) {
+        console.warn("[ReasoningEffortUnlock]", "补开失败：", error && error.message);
+      }
+    }
+  }
+
+  function codexPlusReasoningEffortUnlockExtension(ctx) {
+    codexPlusReasoningEffortUnlockTick();
+    // Statsig 可能晚于注入才 Ready，后台刷新失败也可能再次清空数据：低频复查，补过且仍有数据时是空操作。
+    ctx.setInterval(codexPlusReasoningEffortUnlockTick, 3000);
   }
   async function loadBackendSettings() {
     const loaded = await loadBackendSettingsState();
@@ -26035,6 +26074,7 @@
       { id: "paste-fix", name: "粘贴修复", apply: codexPlusPasteFixExtension },
       { id: "offline-auto-review", name: "拿不到远程开关时补开「替我审批」", apply: codexPlusOfflineAutoReviewExtension },
       { id: "statsig-overrides", name: "Statsig 界面增强", apply: codexPlusStatsigOverridesExtension },
+      { id: "reasoning-effort-unlock", name: "显示 Max / Ultra 档位", apply: codexPlusReasoningEffortUnlockExtension },
       { id: "weixin-desktop-sync", name: "微信会话同步", apply: codexPlusWeixinDesktopSyncExtension },
       // 悬浮球是独立运行时，自己按停用集合判断；这两项让它在装卸、改设置时重新算一次。
       { id: "stepwise", name: "下一步建议", apply: codexPlusStepwiseExtension },

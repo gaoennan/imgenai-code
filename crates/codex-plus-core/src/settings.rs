@@ -1263,6 +1263,10 @@ pub struct BackendSettings {
     /// 只改本机界面与超时参数，服务端能力不变。默认关。
     #[serde(rename = "codexAppStatsigOverrides", default)]
     pub codex_app_statsig_overrides: bool,
+    /// 显示 Max / Ultra 档位：Max 不在 Codex 默认的可选档位里，启动前把 max、ultra 补进
+    /// `[desktop] enabled-reasoning-efforts`；Ultra 由远程开关 multiAgentMode 控制，国内拉不到时补开。默认开。
+    #[serde(rename = "codexAppReasoningEffortUnlock", default = "default_true")]
+    pub codex_app_reasoning_effort_unlock: bool,
     /// Codex App 与 CLI 的本地代理响应信任上报用量，不改 usage；旧会话首次响应前仍可能使用原估算。默认关。
     #[serde(rename = "codexAppReportedUsageCompaction", default)]
     pub codex_app_reported_usage_compaction: bool,
@@ -1579,6 +1583,7 @@ impl Default for BackendSettings {
             codex_app_third_party_reasoning_collapse: false,
             codex_app_offline_auto_review: false,
             codex_app_statsig_overrides: false,
+            codex_app_reasoning_effort_unlock: true,
             codex_app_reported_usage_compaction: false,
             manager_agent_focus: String::new(),
             codex_app_pet_real_mouse_look: false,
@@ -3035,6 +3040,7 @@ fn merge_known_setting_fields(target: &mut Map<String, Value>, source: &Map<Stri
     merge_bool_setting(target, source, "codexAppThirdPartyReasoningCollapse");
     merge_bool_setting(target, source, "codexAppOfflineAutoReview");
     merge_bool_setting(target, source, "codexAppStatsigOverrides");
+    merge_bool_setting(target, source, "codexAppReasoningEffortUnlock");
     merge_bool_setting(target, source, "codexAppReportedUsageCompaction");
     if let Some(value @ ("" | "codex" | "enhance" | "all")) =
         source.get("managerAgentFocus").and_then(Value::as_str)

@@ -4052,6 +4052,64 @@ pub fn cleanup_unsupported_approval_policies_in_home(home: &Path) -> anyhow::Res
     Ok(true)
 }
 
+/// Codex 桌面版没写 `[desktop] enabled-reasoning-efforts` 时用的默认可选档位（ChatGPT.app 26.1106 内置值）。
+/// Max 不在默认里，要用户自己到「设置 → Configuration → Available reasoning efforts」打开。
+const CODEX_DEFAULT_REASONING_EFFORTS: [&str; 6] = ["low", "medium", "high", "xhigh", "ultra", "persistent"];
+const DESKTOP_REASONING_EFFORTS_KEY: &str = "enabled-reasoning-efforts";
+
+/// 「显示 Max / Ultra 档位」：让 `[desktop] enabled-reasoning-efforts` 含 max 与 ultra。
+/// 没写过这一项时按 Codex 的默认档位再加上 max；写过的只追加缺的，其余（包括用户关掉的别的档位）原样保留。
+/// 改了返回 true。`[desktop]` 不是表、或这一项不是数组（格式异常）时不动。
+pub fn ensure_max_ultra_reasoning_efforts(doc: &mut toml_edit::DocumentMut) -> bool {
+    let Some(desktop) = doc
+        .entry("desktop")
+        .or_insert(toml_edit::table())
+        .as_table_like_mut()
+    else {
+        return false;
+    };
+    match desktop.get_mut(DESKTOP_REASONING_EFFORTS_KEY) {
+        None => {
+            let mut efforts = toml_edit::Array::new();
+            for effort in CODEX_DEFAULT_REASONING_EFFORTS.iter().chain(["max"].iter()) {
+                efforts.push(*effort);
+            }
+            desktop.insert(DESKTOP_REASONING_EFFORTS_KEY, toml_edit::value(efforts));
+            true
+        }
+        Some(item) => {
+            let Some(efforts) = item.as_array_mut() else {
+                return false;
+            };
+            let mut changed = false;
+            for effort in ["ultra", "max"] {
+                if !efforts.iter().any(|value| value.as_str() == Some(effort)) {
+                    efforts.push(effort);
+                    changed = true;
+                }
+            }
+            changed
+        }
+    }
+}
+
+/// 启动 Codex 前调用：见 [`ensure_max_ultra_reasoning_efforts`]。没有 config.toml 时新建一份只含这一项的。
+pub fn ensure_max_ultra_reasoning_efforts_in_home(home: &Path) -> anyhow::Result<bool> {
+    let config_path = home.join("config.toml");
+    let existing = match std::fs::read_to_string(&config_path) {
+        Ok(existing) => existing,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error.into()),
+    };
+    let mut doc = parse_toml_document(&existing)?;
+    if !ensure_max_ultra_reasoning_efforts(&mut doc) {
+        return Ok(false);
+    }
+    std::fs::create_dir_all(home)?;
+    crate::settings::atomic_write(&config_path, normalize_optional_toml(doc).as_bytes())?;
+    Ok(true)
+}
+
 fn validate_auth_json(auth_bytes: &[u8], path: &Path) -> anyhow::Result<()> {
     if auth_bytes.iter().all(|byte| byte.is_ascii_whitespace()) {
         return Ok(());

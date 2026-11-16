@@ -183,6 +183,19 @@
       "restart": true
     },
     {
+      "key": "codexAppReasoningEffortUnlock",
+      "builtin": "reasoning-effort-unlock",
+      "group": "plugins",
+      "control": "bool",
+      "title": "显示 Max / Ultra 档位",
+      "description": "Codex 默认不显示 Max；Ultra 要 OpenAI 的远程开关，国内网络拉不到时也会消失。开启后启动 Codex 前把 Max、Ultra 加进可选档位，并在拉不到远程开关时补开 Ultra；能正常拿到远程开关时不改远程数据。Ultra 会同时开多个子代理，消耗明显更快。关闭后重新启动 Codex 生效。",
+      "surfaces": [
+        "manager",
+        "codex"
+      ],
+      "restart": true
+    },
+    {
       "key": "codexAppReportedUsageCompaction",
       "builtin": "reported-usage-compaction",
       "group": "chat",

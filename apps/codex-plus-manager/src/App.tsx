@@ -521,6 +521,7 @@ type BackendSettings = WhaleBalanceSettings & {
   codexAppThirdPartyReasoningCollapse: boolean;
   /** 拿不到远程功能开关（国内网络）时补开「替我审批」入口（#2817），默认关。 */
   codexAppOfflineAutoReview: boolean;
+  codexAppReasoningEffortUnlock: boolean;
   /** Statsig 界面增强：隐藏升级推销、放宽网络超时、补开记忆，默认关。 */
   codexAppStatsigOverrides: boolean;
   /** Codex App 和 CLI 已经经过本地代理的请求按上报用量判断压缩，默认关。 */
@@ -1612,6 +1613,7 @@ const defaultSettings: BackendSettings = {
   codexAppNativePredictions: false,
   codexAppThirdPartyReasoningCollapse: false,
   codexAppOfflineAutoReview: false,
+  codexAppReasoningEffortUnlock: true,
   codexAppStatsigOverrides: false,
   codexAppReportedUsageCompaction: false,
   codexAppDisableWorkView: false,

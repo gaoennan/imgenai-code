@@ -13,7 +13,7 @@
     {
       "name": "10-style.js",
       "description": "样式注入、默认设置、后端设置映射、梦皮主题变量与持久化",
-      "lines": 2837
+      "lines": 2840
     },
     {
       "name": "20-menu.js",
@@ -49,6 +49,11 @@
       "name": "34-statsig-overrides.js",
       "description": "Statsig 界面增强：升级推销、网络超时、记忆开关的客户端覆盖",
       "lines": 133
+    },
+    {
+      "name": "35-reasoning-effort-unlock.js",
+      "description": "显示 Max / Ultra 档位：国内拉不到远程开关时补开 multiAgentMode（Ultra）；Max 由启动前写 config.toml",
+      "lines": 36
     },
     {
       "name": "40-backend-settings.js",
@@ -183,7 +188,7 @@
     {
       "name": "96-builtin-extensions.js",
       "description": "内置拓展：自带功能挂到拓展内核（可停用、可被 replaces 顶替）、多开身份提示、会话标题中间件",
-      "lines": 439
+      "lines": 440
     },
     {
       "name": "96-paste-fix.js",

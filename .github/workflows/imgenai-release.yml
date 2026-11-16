@@ -122,6 +122,8 @@ jobs:
     name: macOS DMG (universal)
     needs: [prepare, macos-build]
     runs-on: macos-15
+    # Apple 新账号头几次公证可能排几个小时；留足时间（GitHub 上限 6 小时）。
+    timeout-minutes: 340
     env:
       MACOSX_DEPLOYMENT_TARGET: "12.0"
       VERSION: ${{ needs.prepare.outputs.version }}
@@ -190,7 +192,8 @@ jobs:
           chmod 600 "$KEY_PATH"
           xcrun notarytool store-credentials "imgenai-notary" --key "$KEY_PATH" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID"
           rm -f "$KEY_PATH"
-          echo "MACOS_NOTARY_PROFILE=imgenai-notary" >> "$GITHUB_ENV"
+          # 不交给打包脚本公证（它用 --wait 一直挂着，构建机网络一抖就整步失败）；打包后由下面的步骤提交并轮询。
+          echo "IMGENAI_NOTARY_PROFILE=imgenai-notary" >> "$GITHUB_ENV"
 
       - name: Build universal DMG
         working-directory: ${{ runner.temp }}/src
@@ -201,13 +204,55 @@ jobs:
           set -euo pipefail
           if [ "$HAS_SIGNING" = "true" ]; then
             export MACOS_SIGNING_IDENTITY="$SIGNING_IDENTITY_SECRET"
-            echo "正式签名：${MACOS_SIGNING_IDENTITY}；公证：${MACOS_NOTARY_PROFILE:-未配置}"
+            echo "正式签名：${MACOS_SIGNING_IDENTITY}；公证：${IMGENAI_NOTARY_PROFILE:-未配置}（打包后单独提交）"
           else
             echo "未配置 Developer ID 证书：ad-hoc 签名，跳过公证"
           fi
           chmod +x target/*-apple-darwin/release/codex-plus-plus target/*-apple-darwin/release/codex-plus-legacy-shim
           bash scripts/installer/macos/build-universal.sh "$VERSION"
           ls -la dist/macos/*.dmg
+
+      # 提交公证后每分钟查一次状态：查询失败（断网、Apple 接口抖动）只是下一分钟再查，不让整步失败；
+      # Accepted 后装订票据（用户离线也能过 Gatekeeper），Invalid / Rejected 打出 Apple 的日志后失败。
+      - name: Notarize DMG
+        if: env.IMGENAI_NOTARY_PROFILE != ''
+        run: |
+          set -euo pipefail
+          DMG="$(ls "$RUNNER_TEMP"/src/dist/macos/*.dmg | head -1)"
+          json_field() { python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1], ""))' "$1"; }
+          ID=""
+          for attempt in 1 2 3 4 5; do
+            if OUT="$(xcrun notarytool submit "$DMG" --keychain-profile "$IMGENAI_NOTARY_PROFILE" --output-format json 2>"$RUNNER_TEMP/notary.err")"; then
+              ID="$(printf '%s' "$OUT" | json_field id)"
+              [ -n "$ID" ] && break
+            fi
+            echo "提交公证失败（第 ${attempt} 次），30 秒后重试：$(cat "$RUNNER_TEMP/notary.err")"
+            sleep 30
+          done
+          [ -n "$ID" ] || { echo "::error::提交公证失败"; exit 1; }
+          echo "公证提交 id：${ID}"
+          DEADLINE=$(( $(date +%s) + 5 * 3600 ))
+          STATUS=""
+          while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+            if INFO="$(xcrun notarytool info "$ID" --keychain-profile "$IMGENAI_NOTARY_PROFILE" --output-format json 2>"$RUNNER_TEMP/notary.err")"; then
+              STATUS="$(printf '%s' "$INFO" | json_field status)"
+              echo "$(date -u +%H:%M:%S) 公证状态：${STATUS}"
+            else
+              echo "$(date -u +%H:%M:%S) 查询失败，下一分钟再查：$(cat "$RUNNER_TEMP/notary.err")"
+            fi
+            case "$STATUS" in
+              Accepted) break ;;
+              Invalid|Rejected)
+                xcrun notarytool log "$ID" --keychain-profile "$IMGENAI_NOTARY_PROFILE" || true
+                echo "::error::公证未通过（${STATUS}），提交 id ${ID}"
+                exit 1 ;;
+            esac
+            sleep 60
+          done
+          [ "$STATUS" = "Accepted" ] || { echo "::error::等公证超时（最后状态：${STATUS:-未知}），提交 id ${ID}"; exit 1; }
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+          echo "公证通过，票据已装订：$(basename "$DMG")"
 
       - name: Upload DMG
         env:

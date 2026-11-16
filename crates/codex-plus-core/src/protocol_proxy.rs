@@ -4136,6 +4136,13 @@ async fn open_responses_proxy_request_once(
             if compaction || experimental_local_compaction || forced_adapted || local_exec_adapted {
                 return Err(crate::responses_websocket::Unsupported("此 WS 路径不执行 HTTP 压缩或 exec 协议转换，请继续使用 HTTP").into());
             }
+        }
+        // 上游不支持 Responses WebSocket（握手回 404 / 405 / 426 / 501）：记下这个地址，这次与之后都改走 HTTP，
+        // 由本地 WS 会话把 HTTP 流转成 WS 事件交回 Codex（见 responses_websocket 的 HTTP 桥接），
+        // 不再让 Codex 反复握手失败、等十几秒才自己退回 HTTP。官方登录成员不走这条。
+        let websocket_upstream = crate::responses_websocket::active()
+            && (official_member || !crate::responses_websocket::http_only(&endpoint));
+        if websocket_upstream {
             let builder = build_responses_upstream_request(
                 &relay, &endpoint, &upstream_body, wire_api, false,
                 original_user_agent, beta_features, session_headers, official_credential.as_ref(),
@@ -4154,11 +4161,26 @@ async fn open_responses_proxy_request_once(
                     )?;
                     request_attempt += 1;
                     prepared = crate::responses_websocket::prepare(
-                        &relay.id, builder, upstream_body, header_timeout,
+                        &relay.id, builder, upstream_body.clone(), header_timeout,
                         official_credential.as_ref().and_then(|credential| credential.account_scope.as_deref()),
                     ).await;
                 }
             }
+            let http_fallback = match &prepared {
+                Ok(crate::responses_websocket::PreparedUpstream::Rejected(response))
+                    if !official_member && crate::responses_websocket::rejects_websocket(response.status().as_u16()) =>
+                {
+                    Some(response.status().as_u16())
+                }
+                _ => None,
+            };
+            if let Some(status) = http_fallback {
+                crate::responses_websocket::mark_http_only(&endpoint);
+                let _ = crate::diagnostic_log::append_diagnostic_log(
+                    "protocol_proxy.websocket_http_fallback",
+                    json!({ "relayId": relay.id, "relayName": relay.name, "endpoint": endpoint, "status": status }),
+                );
+            } else {
             let (websocket, response, status_code) = match prepared {
                 Ok(crate::responses_websocket::PreparedUpstream::Websocket(mut ready)) => {
                     if !strict_aggregate_model { ready.rotation = Some(settings.clone()); }
@@ -4192,7 +4214,10 @@ async fn open_responses_proxy_request_once(
                 buffered_body: None, stream_prefix: Vec::new(), request_trace: Some(request_trace),
                 exec_adapted: false, exec_outcome: None, websocket, response,
             });
+            }
         }
+        // WS 会话改走 HTTP 时不做 exec 协议转换：桥接只原样转发 Responses 事件。
+        let eligible = eligible && !crate::responses_websocket::active();
         let mut key = None;
         let mut exec_adapted = forced_adapted;
         let send = async {

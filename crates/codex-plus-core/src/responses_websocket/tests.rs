@@ -903,3 +903,154 @@ fn websocket_error_without_http_status_preserves_failure_classification() {
 
 mod lifecycle;
 mod origin;
+
+/// 只会 HTTP 的上游（WS 握手回 404，比如 new-api 中转）：本地 WS 会话改走 HTTP 并把 SSE 转成 WS 事件交回，
+/// 不让 Codex 握手失败后再自己退回 HTTP；地址记成只走 HTTP，下一轮不再握手；
+/// Codex 用 previous_response_id 续接时，补回上一轮的输入与输出，按完整上下文发给上游。
+#[tokio::test]
+async fn helper_ws_bridges_http_only_upstream_and_restores_continuation() {
+    if isolated("helper_ws_bridges_http_only_upstream_and_restores_continuation").await {
+        return;
+    }
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let _fixture = Fixture::new(profile(listener.local_addr().unwrap()));
+    let (posts_tx, mut posts_rx) = tokio::sync::mpsc::channel::<Value>(4);
+    let upstream = tokio::spawn(async move {
+        let (mut handshakes, mut answered) = (0, 0);
+        while answered < 2 {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut head = Vec::new();
+            while !head.ends_with(b"\r\n\r\n") {
+                head.push(socket.read_u8().await.unwrap());
+            }
+            let head = String::from_utf8_lossy(&head).to_string();
+            if head.starts_with("GET /v1/responses") {
+                handshakes += 1;
+                socket
+                    .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .await
+                    .unwrap();
+                continue;
+            }
+            assert!(head.starts_with("POST /v1/responses"), "{head}");
+            let length: usize = head
+                .lines()
+                .find_map(|line| {
+                    let line = line.to_ascii_lowercase();
+                    line.strip_prefix("content-length:").map(|value| value.trim().parse().unwrap())
+                })
+                .unwrap();
+            let mut body = vec![0; length];
+            socket.read_exact(&mut body).await.unwrap();
+            posts_tx.send(serde_json::from_slice(&body).unwrap()).await.unwrap();
+            answered += 1;
+            let id = format!("resp_{answered}");
+            let item = json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":format!("answer {answered}")}]});
+            let events = [
+                json!({"type":"response.created","response":{"id":id,"status":"in_progress","output":[]}}),
+                json!({"type":"response.output_item.done","output_index":0,"item":item}),
+                json!({"type":"response.completed","response":{"id":id,"status":"completed","output":[item],
+                    "usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}),
+            ];
+            let mut wire = String::from("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n");
+            for event in events {
+                wire.push_str(&format!("event: {}\r\ndata: {}\r\n\r\n", event["type"].as_str().unwrap(), event));
+            }
+            socket.write_all(wire.as_bytes()).await.unwrap();
+            socket.shutdown().await.unwrap();
+        }
+        assert_eq!(handshakes, 1, "记住只走 HTTP 之后，续接那一轮不再握手");
+    });
+    let (url, task) = helper(1).await;
+    let mut ws = client(&format!("{url}/v1/responses"), &[]).await;
+    send(&mut ws, create("")).await;
+    let (event, kinds) = until_completed(&mut ws).await;
+    assert_eq!(event["response"]["id"], "resp_1");
+    assert!(kinds.iter().any(|kind| kind == "response.created"), "{kinds:?}");
+    assert!(kinds.iter().any(|kind| kind == "response.output_item.done"), "{kinds:?}");
+    let first = posts_rx.recv().await.unwrap();
+    assert!(first.to_string().contains("hello"), "{first}");
+    assert_eq!(first["stream"], true);
+
+    send(&mut ws, json!({"type":"response.create","model":"ws-model","store":false,"previous_response_id":"resp_1",
+        "input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"again"}]}]})).await;
+    let (event, _) = until_completed(&mut ws).await;
+    assert_eq!(event["response"]["id"], "resp_2");
+    let second = posts_rx.recv().await.unwrap();
+    assert!(second.get("previous_response_id").is_none(), "{second}");
+    let texts: Vec<_> = second["input"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|item| item.pointer("/content/0/text").and_then(Value::as_str))
+        .collect();
+    assert_eq!(texts, ["hello", "answer 1", "again"], "{second}");
+
+    ws.close(None).await.unwrap();
+    drop(ws);
+    finish(task).await;
+    finish(upstream).await;
+}
+
+/// 读到 response.completed 为止，途中不许有 error；返回完成事件与途经的事件类型。
+async fn until_completed(ws: &mut Client) -> (Value, Vec<String>) {
+    let mut kinds = Vec::new();
+    loop {
+        let event = next(ws).await;
+        let kind = event["type"].as_str().unwrap_or("").to_string();
+        assert_ne!(kind, "error", "{event}");
+        kinds.push(kind.clone());
+        if kind == "response.completed" {
+            return (event, kinds);
+        }
+    }
+}
+
+#[test]
+fn sse_blocks_split_on_blank_lines_with_either_line_ending() {
+    let mut buffer = b"event: a\r\ndata: {\"type\":\"a\"}\r\n\r\ndata: {\"type\":\"b\"}\n\ndata: [DONE]\n\npartial".to_vec();
+    let first = take_sse_block(&mut buffer).unwrap();
+    assert_eq!(sse_block_event(&first).unwrap()["type"], "a");
+    let second = take_sse_block(&mut buffer).unwrap();
+    assert_eq!(sse_block_event(&second).unwrap()["type"], "b");
+    let done = take_sse_block(&mut buffer).unwrap();
+    assert!(sse_block_event(&done).is_none());
+    assert!(take_sse_block(&mut buffer).is_none());
+    assert_eq!(buffer, b"partial");
+}
+
+#[test]
+fn http_continuation_restores_context_only_for_known_responses() {
+    let registry = Mutex::new(Registry::default());
+    registry.lock().unwrap().remember_http("resp_1".into(), vec![json!({"text":"hello"}), json!({"text":"answer"})]);
+    let mut known = json!({"previous_response_id":"resp_1","input":"again"});
+    expand_http_continuation(&registry, &mut known);
+    assert!(known.get("previous_response_id").is_none());
+    assert_eq!(known["input"][0]["text"], "hello");
+    assert_eq!(known["input"][1]["text"], "answer");
+    assert_eq!(known["input"][2]["content"][0]["text"], "again");
+    let mut unknown = json!({"previous_response_id":"other","input":[]});
+    expand_http_continuation(&registry, &mut unknown);
+    assert_eq!(unknown["previous_response_id"], "other");
+    for index in 0..HTTP_HISTORY_LIMIT + 2 {
+        registry.lock().unwrap().remember_http(format!("r{index}"), Vec::new());
+    }
+    let registry = registry.lock().unwrap();
+    assert_eq!(registry.http_history.len(), HTTP_HISTORY_LIMIT);
+    assert!(!registry.http_history.contains_key("resp_1"));
+}
+
+#[test]
+fn only_missing_websocket_routes_switch_to_http() {
+    for status in [404, 405, 426, 501] {
+        assert!(rejects_websocket(status), "{status}");
+    }
+    for status in [200, 400, 401, 403, 429, 500, 502] {
+        assert!(!rejects_websocket(status), "{status}");
+    }
+    let endpoint = "http://127.0.0.1:1/v1/responses-http-only-test";
+    assert!(!http_only(endpoint));
+    mark_http_only(endpoint);
+    assert!(http_only(endpoint));
+}

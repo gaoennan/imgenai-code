@@ -37,6 +37,87 @@ struct Registry {
     connections: HashMap<String, String>,
     locks: HashMap<String, Arc<tokio::sync::Mutex<()>>>,
     responses: HashMap<String, Affinity>,
+    /// HTTP 桥接完成的响应：响应 id → 到这一轮为止的完整上下文（输入 + 输出）。
+    /// 上游没有 WS 连接缓存，Codex 用 previous_response_id 续接时由这里补回完整 input。
+    http_history: HashMap<String, Vec<Value>>,
+    http_order: std::collections::VecDeque<String>,
+}
+
+/// 一个本地 WS 会话最多记几轮 HTTP 桥接上下文：Codex 只引用紧挨着的上一轮。
+const HTTP_HISTORY_LIMIT: usize = 8;
+
+impl Registry {
+    fn remember_http(&mut self, id: String, items: Vec<Value>) {
+        if self.http_history.insert(id.clone(), items).is_none() {
+            self.http_order.push_back(id);
+        }
+        while self.http_order.len() > HTTP_HISTORY_LIMIT {
+            if let Some(old) = self.http_order.pop_front() {
+                self.http_history.remove(&old);
+            }
+        }
+    }
+}
+
+/// 不支持 Responses WebSocket 的上游地址：握手回这些状态码说明这条路没有 WS（不是请求本身有错）。
+pub(crate) fn rejects_websocket(status: u16) -> bool {
+    matches!(status, 404 | 405 | 426 | 501)
+}
+
+/// 记住不支持 WS 的上游地址（本进程内 6 小时）：期间这个地址直接走 HTTP，再由本地 WS 会话桥接给 Codex。
+static HTTP_ONLY: std::sync::LazyLock<Mutex<HashMap<String, std::time::Instant>>> =
+    std::sync::LazyLock::new(Default::default);
+const HTTP_ONLY_TTL: Duration = Duration::from_secs(6 * 3600);
+
+pub(crate) fn http_only(endpoint: &str) -> bool {
+    HTTP_ONLY
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(endpoint)
+        .is_some_and(|marked| marked.elapsed() < HTTP_ONLY_TTL)
+}
+
+pub(crate) fn mark_http_only(endpoint: &str) {
+    let mut marked = HTTP_ONLY.lock().unwrap_or_else(|p| p.into_inner());
+    if marked.len() >= 256 {
+        marked.retain(|_, at| at.elapsed() < HTTP_ONLY_TTL);
+    }
+    marked.insert(endpoint.to_string(), std::time::Instant::now());
+}
+
+/// Responses 的 input 统一成条目数组：字符串等同一条用户消息。
+fn input_items(input: Option<&Value>) -> Vec<Value> {
+    match input {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(items)) => items.clone(),
+        Some(Value::String(text)) => vec![json!({
+            "type": "message", "role": "user",
+            "content": [{ "type": "input_text", "text": text }],
+        })],
+        Some(other) => vec![other.clone()],
+    }
+}
+
+/// previous_response_id 指向 HTTP 桥接的响应时，把那一轮的完整上下文补回 input、去掉 previous_response_id，
+/// 按完整请求发给上游（HTTP 上游没有这轮的连接缓存，Codex 的 store 也是 false）。认不得的 id 不动。
+fn expand_http_continuation(registry: &Mutex<Registry>, body: &mut Value) {
+    let Some(id) = body.get("previous_response_id").and_then(Value::as_str) else {
+        return;
+    };
+    let Some(mut items) = registry
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .http_history
+        .get(id)
+        .cloned()
+    else {
+        return;
+    };
+    items.extend(input_items(body.get("input")));
+    if let Some(object) = body.as_object_mut() {
+        object.remove("previous_response_id");
+        object.insert("input".into(), Value::Array(items));
+    }
 }
 
 pub(crate) struct RequestContext {
@@ -281,6 +362,30 @@ pub(crate) async fn prepare(
     })))
 }
 
+impl PreparedWebsocket {
+    /// HTTP 桥接用：没有上游 WS 连接，`connection` 是本地会话里唯一的桥接 id。
+    /// Key 成功、路由粘性与速度在网关拿到 HTTP 响应头时已经记过，这里不再带 gateway / recorder。
+    fn http_bridge(relay: String, body: Value) -> Self {
+        static NEXT_BRIDGE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        Self {
+            connection: format!(
+                "http:{}",
+                NEXT_BRIDGE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ),
+            fingerprint: String::new(),
+            relay,
+            body,
+            socket: None,
+            registration: None,
+            headers: reqwest::header::HeaderMap::new(),
+            gateway: None,
+            rotation: None,
+            recorder: None,
+            busy: None,
+        }
+    }
+}
+
 fn ws_config() -> tokio_tungstenite::tungstenite::protocol::WebSocketConfig {
     tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
         .max_message_size(Some(16 * 1024 * 1024))
@@ -362,6 +467,20 @@ impl ClientHeaders {
 struct Opened {
     lane: String,
     response: ActiveResponse,
+    /// 上游走的是 HTTP（不支持 WS）：读它的 SSE 流转成 WS 事件。
+    http: Option<HttpUpstream>,
+}
+
+struct HttpUpstream {
+    /// 网关已经预读的流开头，必须先于剩余部分转发。
+    prefix: Vec<u8>,
+    response: reqwest::Response,
+}
+
+/// HTTP 桥接的这一轮：发出的完整 input，与收到的输出条目（完成时一起记进 http_history）。
+struct HttpContext {
+    input: Vec<Value>,
+    output: Vec<Value>,
 }
 
 struct Reservation {
@@ -386,6 +505,7 @@ struct ActiveResponse {
     filter: Option<crate::extension_gateway::ResponseFilter>,
     started: std::time::Instant,
     response_id: Option<String>,
+    http: Option<HttpContext>,
 }
 
 impl Drop for ActiveResponse {
@@ -503,6 +623,115 @@ fn start_connection(
     Connection { sender, task }
 }
 
+/// 从缓冲里取出一个完整的 SSE 事件块（到空行为止，`\n\n` 或 `\r\n\r\n`），连同分隔符一起移出。
+fn take_sse_block(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
+    let find = |needle: &[u8]| buffer.windows(needle.len()).position(|window| window == needle);
+    let (end, separator) = match (find(b"\r\n\r\n"), find(b"\n\n")) {
+        (Some(crlf), Some(lf)) if crlf <= lf => (crlf, 4),
+        (_, Some(lf)) => (lf, 2),
+        (Some(crlf), None) => (crlf, 4),
+        (None, None) => return None,
+    };
+    let block = buffer[..end].to_vec();
+    buffer.drain(..end + separator);
+    Some(block)
+}
+
+/// SSE 事件块里 `data:` 行拼成的 JSON；`[DONE]`、注释与空事件返回 None。
+fn sse_block_event(block: &[u8]) -> Option<Value> {
+    let text = String::from_utf8_lossy(block);
+    let data = text
+        .lines()
+        .filter_map(|line| line.strip_prefix("data:"))
+        .map(|line| line.strip_prefix(' ').unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let data = data.trim();
+    if data.is_empty() || data == "[DONE]" {
+        return None;
+    }
+    serde_json::from_str(data).ok()
+}
+
+/// HTTP 桥接：读上游的 SSE 流，每个事件补上 stream_id 后当作这条「连接」的 WS 帧交给主循环；
+/// 读完（或上游断开、长时间没数据）发 Closed。主循环照常按事件转发、记日志、在终态收尾，
+/// 流在终态之前断开的，按「上游连接已关闭」报给 Codex。
+fn start_http_stream(
+    id: String,
+    lane: String,
+    upstream: HttpUpstream,
+    events: tokio::sync::mpsc::Sender<UpstreamEvent>,
+) -> Connection {
+    // 这条「连接」没有要写给上游的东西：发送端只为与 WS 连接同形，收到的命令直接丢弃。
+    let (sender, _commands) = tokio::sync::mpsc::channel::<Message>(1);
+    let task = tokio::spawn(async move {
+        let HttpUpstream { prefix, mut response } = upstream;
+        let mut buffer = prefix;
+        let emit = |block: &[u8]| {
+            sse_block_event(block).map(|mut event| {
+                if !lane.is_empty() {
+                    event["stream_id"] = json!(lane);
+                }
+                UpstreamEvent::Frame(id.clone(), Message::Text(event.to_string().into()))
+            })
+        };
+        'read: loop {
+            while let Some(block) = take_sse_block(&mut buffer) {
+                if let Some(event) = emit(&block)
+                    && events.send(event).await.is_err()
+                {
+                    break 'read;
+                }
+            }
+            match tokio::time::timeout(Duration::from_secs(600), response.chunk()).await {
+                Ok(Ok(Some(chunk))) => buffer.extend_from_slice(&chunk),
+                Ok(Ok(None)) => {
+                    if let Some(event) = emit(&buffer) {
+                        let _ = events.send(event).await;
+                    }
+                    break;
+                }
+                Ok(Err(_)) | Err(_) => break,
+            }
+        }
+        let _ = events.send(UpstreamEvent::Closed(id)).await;
+    });
+    Connection { sender, task }
+}
+
+/// 上游没接 WS、走了 HTTP：能桥接的只有成功的 Responses 流（没有被网关读完、没做 exec 包装或压缩重组）。
+fn http_bridgeable(upstream: &crate::protocol_proxy::UpstreamProxyResponse) -> bool {
+    (200..300).contains(&upstream.status_code)
+        && upstream.is_stream
+        && upstream.response.is_some()
+        && upstream.buffered_body.is_none()
+        && !upstream.exec_adapted
+        && !upstream.compaction
+        && !upstream.native_compaction_passthrough
+        && upstream.wire_api == crate::protocol_proxy::UpstreamWireApi::Responses
+}
+
+/// 上游错误响应里的说明（`error.message` 或 `message`），读不到时返回 None。
+async fn upstream_error_message(upstream: &mut crate::protocol_proxy::UpstreamProxyResponse) -> Option<String> {
+    let bytes = match (upstream.buffered_body.take(), upstream.response.take()) {
+        (Some(body), _) => body,
+        (None, Some(response)) => tokio::time::timeout(Duration::from_secs(5), response.bytes())
+            .await
+            .ok()?
+            .ok()?
+            .to_vec(),
+        (None, None) => return None,
+    };
+    let value: Value = serde_json::from_slice(&bytes).ok()?;
+    value
+        .pointer("/error/message")
+        .or_else(|| value.get("message"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|message| !message.is_empty())
+        .map(|message| message.chars().take(500).collect())
+}
+
 fn error_event(lane: &str, status: u16, message: &str) -> Message {
     let mut value = json!({"type":"error","status":status,"error":{"type":"invalid_request_error","code":"local_responses_websocket_error","message":message}});
     if !lane.is_empty() {
@@ -542,7 +771,7 @@ fn parse_create(text: &str) -> anyhow::Result<(String, Value)> {
 
 async fn open_request(
     lane: String,
-    body: Value,
+    mut body: Value,
     headers: ClientHeaders,
     path: String,
     opener: crate::launcher::ProxyOpener,
@@ -561,6 +790,7 @@ async fn open_request(
             "本地 WS 响应亲和记录已达上限，请重新连接并发送完整上下文".into(),
         ));
     }
+    expand_http_continuation(&registry, &mut body);
     let previous = body
         .get("previous_response_id")
         .and_then(Value::as_str)
@@ -601,19 +831,35 @@ async fn open_request(
         let reservation = Reservation { slot, submitted: false };
         log.record_upstream(&upstream);
         log.entry.success = false;
-        let Some(ready) = upstream.websocket.take() else {
-            let status = if upstream.status_code == 200 { 502 } else { upstream.status_code };
-            let message = "选中的上游未接受标准 Responses WebSocket，请为此配置使用 HTTP".to_string();
-            log.record_error(&status.to_string(), message.clone());
-            return Err((lane, status, message));
+        // 上游不支持 WS 时网关已改走 HTTP：成功的流在本地桥接成 WS 事件。
+        let (ready, http) = match upstream.websocket.take() {
+            Some(ready) => (ready, None),
+            None if http_bridgeable(&upstream) => {
+                let relay = upstream.request_trace.as_ref().map(|trace| trace.relay_id.clone()).unwrap_or_default();
+                let Some(response) = upstream.response.take() else {
+                    return Err((lane, 502, "WS 上游连接或请求准备失败".to_string()));
+                };
+                let prefix = std::mem::take(&mut upstream.stream_prefix);
+                (Box::new(PreparedWebsocket::http_bridge(relay, body.clone())), Some(HttpUpstream { prefix, response }))
+            }
+            None => {
+                let status = if upstream.status_code == 200 { 502 } else { upstream.status_code };
+                let message = match upstream_error_message(&mut upstream).await {
+                    Some(detail) => format!("上游返回 {status}：{detail}"),
+                    None => "选中的上游未接受标准 Responses WebSocket，请为此配置使用 HTTP".to_string(),
+                };
+                log.record_error(&status.to_string(), message.clone());
+                return Err((lane, status, message));
+            }
         };
         let phase = crate::settings::SettingsStore::default().load().unwrap_or_default().codex_app_third_party_reasoning_collapse;
         let transformer = crate::protocol_proxy::ResponsesSseTransformer::for_request(Some(&body))
             .filling_message_phase(phase && !crate::extension_gateway::builtin_replaced("builtin:reasoning-collapse"));
+        let http_context = http.is_some().then(|| HttpContext { input: input_items(body.get("input")), output: Vec::new() });
         let mut response = ActiveResponse { ready, log, reservation, transformer, filter: None,
-            started: std::time::Instant::now(), response_id: None };
+            started: std::time::Instant::now(), response_id: None, http: http_context };
         response.filter = crate::extension_gateway::ResponseFilter::start(&path, Some(&body)).await;
-        Ok(Opened { lane, response })
+        Ok(Opened { lane, response, http })
     })).await
 }
 
@@ -815,9 +1061,16 @@ pub(crate) async fn handle(
                         send_message(&mut ws, error_event(&lane, status, &message)).await?;
                     }
                     Ok(opened) => {
-                        let Opened { lane, mut response } = opened;
+                        let Opened { lane, mut response, http } = opened;
                         preparing.0.remove(&lane);
                         let id = response.ready.connection.clone();
+                        // HTTP 桥接：请求已经发出、响应头已到，读流的任务把事件当作这条「连接」的帧送回来。
+                        if let Some(http) = http {
+                            connections.insert(id.clone(), start_http_stream(id, lane.clone(), http, events_tx.clone()));
+                            response.reservation.submitted = true;
+                            active.insert(lane, response);
+                            continue;
+                        }
                         if let Some(socket) = response.ready.socket.take() {
                             connections.insert(id.clone(), start_connection(id.clone(), socket, events_tx.clone()));
                             registry.lock().unwrap_or_else(|p| p.into_inner()).connections.insert(response.ready.fingerprint.clone(), id.clone());
@@ -893,6 +1146,22 @@ pub(crate) async fn handle(
                         });
                     }
                     if kind.ends_with(".delta") { response.log.mark_first_token_at(crate::launcher::current_time_ms()); }
+                    // HTTP 桥接：收集输出条目，完成时连同输入记成这一轮的完整上下文，供下一轮续接补回。
+                    if let Some(context) = response.http.as_mut() {
+                        if kind == "response.output_item.done" && let Some(item) = event.get("item") {
+                            context.output.push(item.clone());
+                        }
+                        let completed = kind == "response.completed"
+                            && event.pointer("/response/status").and_then(Value::as_str).is_none_or(|s| s == "completed");
+                        if completed && let Some(response_id) = response.response_id.clone() {
+                            let mut items = std::mem::take(&mut context.input);
+                            match event.pointer("/response/output").and_then(Value::as_array).filter(|output| !output.is_empty()) {
+                                Some(output) => items.extend(output.iter().cloned()),
+                                None => items.append(&mut context.output),
+                            }
+                            registry.lock().unwrap_or_else(|p| p.into_inner()).remember_http(response_id, items);
+                        }
+                    }
                     forward_response_event(&mut ws, &lane, response, &text).await?;
                     if matches!(kind, "response.completed" | "response.failed" | "response.incomplete" | "error") {
                         finish_response(&mut ws, &lane, response).await?;

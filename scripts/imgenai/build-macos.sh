@@ -35,7 +35,7 @@ echo "==> 构建前端" >&2
 echo "==> 构建 Rust（release）" >&2
 (cd "$SRC" && CARGO_TARGET_DIR="$BUILD/target" cargo build --release -p codex-plus-manager)
 
-echo "==> 打包 DMG（版本 $VERSION）" >&2
+echo "==> 打包 DMG（版本 ${VERSION}）" >&2
 # 二进制先复制到单独目录并清掉扩展属性，再交给打包脚本（它会原样 cp 进 .app 后签名）。
 BIN="$BUILD/bin"
 rm -rf "${BIN:?}" && mkdir -p "$BIN"

@@ -114,6 +114,7 @@ pub mod update;
 pub mod extension_backend;
 pub mod imgenai_account;
 pub mod imgenai_codex_direct;
+pub mod imgenai_loopback_proxy;
 pub mod extension_claude;
 pub mod extension_codex;
 pub mod extension_creator;

@@ -327,6 +327,8 @@ pub fn run() {
                 gateway_commands::sync_extension_pool();
                 // imgenai 分发版：首次启动默认开机启动并隐藏到托盘（网关在客户端里，客户端常驻 Codex 才连得上）。
                 imgenai::apply_first_run_defaults();
+                // imgenai 分发版：开着代理时 Codex 发往本机网关的请求不能被交给代理（Windows 补 NO_PROXY）。
+                imgenai::ensure_loopback_bypasses_proxy();
             });
             codex_plus_core::settings::set_external_settings_change_listener(
                 gateway_commands::notify_settings_changed,

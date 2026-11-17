@@ -8,6 +8,7 @@ imgenai Code 是在开源项目 [Codex++](https://github.com/BigPizzaV3/CodexPlu
 | --- | --- | --- |
 | imgenai 账户（登录、额度、重置卡、订阅与加油包） | `assets/extensions/imgenai-account/`，后台在 `crates/codex-plus-core/src/imgenai_account.rs` | 第六个官方内置拓展包，默认启用；后台内置在客户端里，不依赖 Node |
 | 客户端关着时 Codex 直连 imgenai、首次启动默认开机启动 | `apps/codex-plus-manager/src-tauri/src/imgenai.rs`、`crates/codex-plus-core/src/imgenai_codex_direct.rs` | 退出时把连着本机网关的 Codex 改成直连 api.imgenai.net，启动时最先改回；首次启动打开开机启动并隐藏到托盘（只设一次） |
+| 开着代理时 Codex 连本机网关不走代理 | `crates/codex-plus-core/src/imgenai_loopback_proxy.rs`，调用点在 `imgenai.rs` | Windows 启动时给当前用户的 `NO_PROXY` 补 `localhost,127.0.0.1,::1`（setx）。Codex 的网络库不认系统代理例外里的 `127.*`，也不自动放过回环地址，大请求在代理那里失败回空 502 |
 | 内置拓展包注册、默认启用 | `crates/codex-plus-core/src/bundled_extensions.rs`、`user_scripts.rs` | 几十行 |
 | 拓展供应商 `requiresKey` | `user_scripts.rs` | 没有密钥时不并入网关 |
 | 拓展供应商 `pool` | `crates/codex-plus-core/src/gateway/extension_pool.rs`，调用点在管理器的 `set_extension_config`、拓展开关与启动时 | 登录拿到密钥后把 imgenai 写进供应商池（看得到、能选模型），退出登录时移出 |

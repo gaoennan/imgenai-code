@@ -77,6 +77,13 @@ Windows 安装包暂未做代码签名，点「更多信息」，再点「仍要
 </details>
 
 <details>
+  <summary><strong>开着代理软件时，Codex 报「502 Bad Gateway: Unknown error」怎么办？</strong></summary>
+
+这是 Codex 把发往本机网关（127.0.0.1）的请求也交给了代理软件，对话里图片一多、请求变大后在代理那里失败。1.0.4 起，Windows 版客户端启动时会自动把 `localhost,127.0.0.1,::1` 加进当前用户的环境变量 `NO_PROXY`，更新后完全退出并重新打开一次 Codex 即可，代理照常开着。旧版本可以手动添加这个环境变量，或者临时关掉代理。
+
+</details>
+
+<details>
   <summary><strong>账号和密钥存在哪里？</strong></summary>
 
 客户端只保存网站返回的登录令牌，不保存密码；令牌和中转密钥都只存在本机，界面里只显示打码后的样子。退出登录后，imgenai 会从供应商池移除。

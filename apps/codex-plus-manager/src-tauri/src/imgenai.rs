@@ -3,6 +3,8 @@
 //! - 首次启动：默认开机启动、登录时隐藏到托盘（只设一次，用户之后关掉就不再打开）。
 //! - 启动时：上次退出切成直连 imgenai 的 Codex 配置改回网关（必须在网关接入、自动接管、启动 Codex 之前）。
 //! - 退出时：Codex 还连着本机网关的话改成直连 imgenai，客户端没开时 Codex 照样能用。
+//! - 启动时（Windows）：当前用户的 NO_PROXY 补上回环地址，开着代理时 Codex 发往本机网关的请求不被交给代理
+//!   （见 core::imgenai_loopback_proxy）。
 
 use codex_plus_core::bundled_extensions::IMGENAI_ACCOUNT_KEY;
 use codex_plus_core::imgenai_codex_direct;
@@ -68,5 +70,16 @@ pub fn switch_codex_direct_on_exit() {
         Ok(true) => log("imgenai.codex_switched_direct", json!({ "port": gateway_port })),
         Ok(false) => log("imgenai.codex_direct_skipped", json!({ "port": gateway_port, "loggedIn": !api_key.is_empty() })),
         Err(error) => log("imgenai.codex_switch_direct_failed", json!({ "message": format!("{error:#}") })),
+    }
+}
+
+/// Windows：当前用户的 NO_PROXY 缺回环地址时补上（每次启动核对一次，已经有了就不动）。
+/// 写了之后已经在运行的 Codex 要重启一次才生效。其它系统不需要：macOS 系统代理的例外列表本来就是 127.0.0.1 这种写法。
+pub fn ensure_loopback_bypasses_proxy() {
+    #[cfg(windows)]
+    match codex_plus_core::imgenai_loopback_proxy::ensure_windows_user_no_proxy() {
+        Ok(true) => log("imgenai.no_proxy_loopback_added", json!({})),
+        Ok(false) => {}
+        Err(error) => log("imgenai.no_proxy_loopback_failed", json!({ "message": format!("{error:#}") })),
     }
 }

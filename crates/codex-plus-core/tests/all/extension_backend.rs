@@ -483,26 +483,44 @@ fn schedules_are_validated() {
     assert!(error("user:bad-time").contains("HH:MM"));
 }
 
-/// imgenai 分发版：账户拓展的后台用真实宿主跑起来，配置里的服务地址传得进去、登录令牌能在调用之间保留。
+/// imgenai 分发版：账户拓展的后台内置在客户端里，经真实宿主调用；配置里的服务地址传得进去、登录令牌能在调用之间保留。
+/// 清单里的 backend/main.mjs 只是空壳（方法表为空），这里的调用全部成功就说明走的是内置实现、没有起 Node。
 #[tokio::test]
 async fn imgenai_account_backend_runs_under_the_real_host() {
     use codex_plus_core::bundled_extensions::{IMGENAI_ACCOUNT_KEY, materialize};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    if codex_plus_core::dsh_plugins::locate_node().is_none() {
-        eprintln!("跳过：本机没有 Node");
-        return;
-    }
-    // 极简的模拟网站：登录给令牌，带令牌查订阅给数据，其余 401。
+    // 模拟网站：登录给令牌（密码 wrong 时按网站习惯回 200 + success:false），带令牌查订阅、密钥、下单给数据，其余 401。
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let site = format!("http://{}", listener.local_addr().unwrap());
     let site_for_server = site.clone();
+    let key_created = Arc::new(AtomicBool::new(false));
+    let created = key_created.clone();
     let server = tokio::spawn(async move {
         let site = site_for_server;
         loop {
             let Ok((mut stream, _)) = listener.accept().await else { break };
-            let mut buffer = vec![0u8; 8192];
-            let read = stream.read(&mut buffer).await.unwrap_or(0);
-            let request = String::from_utf8_lossy(&buffer[..read]).to_string();
+            // 读完请求头和 Content-Length 指定的请求体（头和体可能分两次到）。
+            let mut buffer = Vec::new();
+            let mut chunk = vec![0u8; 8192];
+            let request = loop {
+                let read = stream.read(&mut chunk).await.unwrap_or(0);
+                buffer.extend_from_slice(&chunk[..read]);
+                let text = String::from_utf8_lossy(&buffer).to_string();
+                if let Some(split) = text.find("\r\n\r\n") {
+                    let length = text[..split]
+                        .lines()
+                        .find_map(|line| line.to_ascii_lowercase().strip_prefix("content-length:").map(|value| value.trim().parse::<usize>().unwrap_or(0)))
+                        .unwrap_or(0);
+                    if buffer.len() >= split + 4 + length {
+                        break text;
+                    }
+                }
+                if read == 0 {
+                    break text;
+                }
+            };
             // 支付平台的二维码地址先 302 到真正的图片（虎皮椒 qrcode_v3 就是这样），后台要跟过去。
             if request.starts_with("GET /pay/qrcode ") {
                 let _ = stream.write_all(b"HTTP/1.1 302 Found\r\nLocation: /pay/qrcode.png?x=1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
@@ -515,13 +533,26 @@ async fn imgenai_account_backend_runs_under_the_real_host() {
                 let _ = stream.write_all(png).await;
                 continue;
             }
+            let authed = request.contains("Bearer t-1");
             let order = format!(r#"{{"success":true,"data":{{"tradeOrderId":"o-1","paymentUrl":"{site}/pay/page","qrcodeUrl":"{site}/pay/qrcode"}}}}"#);
-            let body = if request.starts_with("POST /api/payment/create") && request.contains("Bearer t-1") {
+            let body = if request.starts_with("POST /api/payment/create") && authed {
                 order.as_str()
+            } else if request.starts_with("POST /api/auth/login") && request.contains(r#""password":"wrong""#) {
+                r#"{"success":false,"code":"BAD_PASSWORD","message":"手机号或密码错误"}"#
             } else if request.starts_with("POST /api/auth/login") {
-                r#"{"success":true,"token":"t-1","user":{"id":1,"phone":"13800000000"}}"#
-            } else if request.starts_with("GET /api/relay/subscription") && request.contains("Bearer t-1") {
+                r#"{"success":true,"token":"t-1","user":{"id":1,"phone":"13800000000","email":"不该落盘"}}"#
+            } else if request.starts_with("GET /api/relay/subscription") && authed {
                 r#"{"success":true,"data":{"active":true,"tier":"paid","daily_cap_usd":35}}"#
+            } else if request.starts_with("GET /api/relay/tokens") && authed {
+                // 新建之前只有一把打码的同名密钥（不能用），新建之后列表换成 items 包装的完整密钥。
+                if created.load(Ordering::SeqCst) {
+                    r#"{"success":true,"data":{"items":[{"name":"桌面客户端","key":"realkey"}]}}"#
+                } else {
+                    r#"{"success":true,"data":[{"name":"桌面客户端","key":"sk-ab**cd"}]}"#
+                }
+            } else if request.starts_with("POST /api/relay/tokens") && authed && request.contains("桌面客户端") {
+                created.store(true, Ordering::SeqCst);
+                r#"{"success":true}"#
             } else {
                 ""
             };
@@ -541,23 +572,60 @@ async fn imgenai_account_backend_runs_under_the_real_host() {
 
     with_extension_backend_cleanup(&[&manager], async {
         let timeout = Duration::from_secs(15);
-        let state = call(&manager, IMGENAI_ACCOUNT_KEY, "state", json!(null), timeout, None).await.unwrap();
+        let run = |method: &'static str, params: serde_json::Value| call(&manager, IMGENAI_ACCOUNT_KEY, method, params, timeout, None);
+        let state = run("state", json!(null)).await.unwrap();
         assert_eq!(state["ok"], true, "{state}");
         assert_eq!(state["loggedIn"], false);
         assert_eq!(state["site"], json!(site), "配置里的服务地址传进了后台");
 
-        let login = call(&manager, IMGENAI_ACCOUNT_KEY, "login", json!({ "phone": "13800000000", "password": "p" }), timeout, None).await.unwrap();
+        // 没登录：概览直接说没登录，要令牌的接口给 NOT_LOGGED_IN。
+        let overview = run("overview", json!(null)).await.unwrap();
+        assert_eq!(overview, json!({ "ok": true, "loggedIn": false }));
+        let key = run("ensureKey", json!(null)).await.unwrap();
+        assert_eq!((key["ok"].clone(), key["code"].clone()), (json!(false), json!("NOT_LOGGED_IN")), "{key}");
+
+        let empty = run("login", json!({ "phone": " ", "password": "p" })).await.unwrap();
+        assert_eq!(empty["code"], "INVALID_INPUT", "{empty}");
+        let wrong = run("login", json!({ "phone": "13800000000", "password": "wrong" })).await.unwrap();
+        assert_eq!(wrong["ok"], false, "{wrong}");
+        assert_eq!(wrong["code"], "BAD_PASSWORD");
+        assert_eq!(wrong["message"], "手机号或密码错误", "网站的 success:false 原样转给页面");
+
+        let login = run("login", json!({ "phone": "13800000000", "password": "p" })).await.unwrap();
         assert_eq!(login["ok"], true, "{login}");
-        let overview = call(&manager, IMGENAI_ACCOUNT_KEY, "overview", json!(null), timeout, None).await.unwrap();
+        assert_eq!(login["user"], json!({ "id": 1, "phone": "13800000000", "nickname": "" }), "只留界面要用的字段");
+        let session = fs::read_to_string(temp.path().join("extension-data/imgenai-account/session.json")).unwrap();
+        assert!(session.contains("t-1") && !session.contains("不该落盘") && !session.contains("\"p\""), "{session}");
+        let overview = run("overview", json!(null)).await.unwrap();
         assert_eq!(overview["ok"], true, "{overview}");
         assert_eq!(overview["sub"]["daily_cap_usd"], 35, "登录令牌保存在数据目录、下次调用带上了");
 
+        // 取密钥：只有打码的同名密钥时新建一把，再从 items 里取完整密钥并补上 sk- 前缀。
+        let key = run("ensureKey", json!(null)).await.unwrap();
+        assert_eq!(key, json!({ "ok": true, "key": "sk-realkey", "name": "桌面客户端" }));
+
         // 下单：二维码地址 302 之后才是图片，后台跟过去转成 data URL（面板页不放行外部图片）。
-        let order = call(&manager, IMGENAI_ACCOUNT_KEY, "createOrder", json!({ "kind": "subscription", "plan": "paid" }), timeout, None).await.unwrap();
+        let order = run("createOrder", json!({ "kind": "subscription", "plan": "paid" })).await.unwrap();
         assert_eq!(order["ok"], true, "{order}");
         assert_eq!(order["tradeOrderId"], "o-1");
         assert!(order["qrDataUrl"].as_str().unwrap_or("").starts_with("data:image/png;base64,"), "{order}");
         assert_eq!(order["paymentUrl"], json!(format!("{site}/pay/page")));
+
+        let bad = run("orderStatus", json!({ "tradeOrderId": "../x" })).await.unwrap();
+        assert_eq!(bad["code"], "INVALID_INPUT", "{bad}");
+        let not_web = run("openUrl", json!({ "url": "file:///etc/passwd" })).await.unwrap();
+        assert_eq!(not_web["code"], "INVALID_INPUT", "{not_web}");
+
+        // 网站回 401：当作登录过期，清掉本地令牌。
+        let expired = run("freeTrial", json!(null)).await.unwrap();
+        assert_eq!((expired["code"].clone(), expired["status"].clone()), (json!("SESSION_EXPIRED"), json!(401)), "{expired}");
+        assert_eq!(run("state", json!(null)).await.unwrap()["loggedIn"], false);
+
+        let unknown = run("noSuchMethod", json!(null)).await.unwrap_err();
+        assert!(unknown.to_string().contains("后台没有方法"), "{unknown}");
+
+        let logout = run("logout", json!(null)).await.unwrap();
+        assert_eq!(logout, json!({ "ok": true }));
     })
     .await;
     server.abort();

@@ -683,6 +683,13 @@ async fn call_for_host(
             return Err(error);
         }
     };
+    // imgenai 分发版：内置的账户拓展由客户端直接处理，不起 Node（Windows 上多半没有 Node）。
+    if host == BackendHost::Codex && key == crate::bundled_extensions::IMGENAI_ACCOUNT_KEY {
+        let data = data_dir(manager, &declared.0, host);
+        return tokio::time::timeout(timeout, crate::imgenai_account::call(&declared.2, &data, method, &params))
+            .await
+            .map_err(|_| anyhow::anyhow!("调用 {method} 超时"))?;
+    }
     let wanted = fingerprint(&declared.1, &declared.2);
     ensure_started(manager, key, declared, &wanted, host).await?;
     let key = &host_slot(manager, key, host);

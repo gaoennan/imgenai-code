@@ -12,7 +12,7 @@
 //!   `/thread-usage-history`；这些路由都走拓展白名单且只读。
 //! - 「请求状态条」（`proxy-request-status`）：取数走拓展白名单里的只读路由 `/proxy-status`。
 //! - 「imgenai 账户」（`imgenai-account`）：imgenai 分发版新增。管理器页面登录 imgenai 账号、看额度、用重置卡、
-//!   开通订阅与加油包；常驻后台调 imgenai 网站接口；声明的 `imgenai` 供应商用登录后拿到的密钥并入网关。默认启用。
+//!   开通订阅与加油包；后台内置在客户端（`imgenai_account`，不依赖 Node）调 imgenai 网站接口；声明的 `imgenai` 供应商用登录后拿到的密钥并入网关。默认启用。
 use std::path::Path;
 
 use anyhow::Context;

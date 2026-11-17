@@ -6,7 +6,7 @@ imgenai Code 是在开源项目 [Codex++](https://github.com/BigPizzaV3/CodexPlu
 
 | 内容 | 位置 | 说明 |
 | --- | --- | --- |
-| imgenai 账户（登录、额度、重置卡、订阅与加油包） | `assets/extensions/imgenai-account/` | 第六个官方内置拓展包，默认启用 |
+| imgenai 账户（登录、额度、重置卡、订阅与加油包） | `assets/extensions/imgenai-account/`，后台在 `crates/codex-plus-core/src/imgenai_account.rs` | 第六个官方内置拓展包，默认启用；后台内置在客户端里，不依赖 Node |
 | 内置拓展包注册、默认启用 | `crates/codex-plus-core/src/bundled_extensions.rs`、`user_scripts.rs` | 几十行 |
 | 拓展供应商 `requiresKey` | `user_scripts.rs` | 没有密钥时不并入网关 |
 | 拓展供应商 `pool` | `crates/codex-plus-core/src/gateway/extension_pool.rs`，调用点在管理器的 `set_extension_config`、拓展开关与启动时 | 登录拿到密钥后把 imgenai 写进供应商池（看得到、能选模型），退出登录时移出 |

@@ -533,24 +533,31 @@ async fn imgenai_account_backend_runs_under_the_real_host() {
                 let _ = stream.write_all(png).await;
                 continue;
             }
-            let authed = request.contains("Bearer t-1");
+            // 两个账号：13800000000 拿令牌 t-1，13900000000 拿令牌 t-2。
+            let first = request.contains("Bearer t-1");
+            let second = request.contains("Bearer t-2");
+            let authed = first || second;
             let order = format!(r#"{{"success":true,"data":{{"tradeOrderId":"o-1","paymentUrl":"{site}/pay/page","qrcodeUrl":"{site}/pay/qrcode"}}}}"#);
             let body = if request.starts_with("POST /api/payment/create") && authed {
                 order.as_str()
             } else if request.starts_with("POST /api/auth/login") && request.contains(r#""password":"wrong""#) {
                 r#"{"success":false,"code":"BAD_PASSWORD","message":"手机号或密码错误"}"#
+            } else if request.starts_with("POST /api/auth/login") && request.contains("13900000000") {
+                r#"{"success":true,"token":"t-2","user":{"id":2,"phone":"13900000000","nickname":"二号"}}"#
             } else if request.starts_with("POST /api/auth/login") {
                 r#"{"success":true,"token":"t-1","user":{"id":1,"phone":"13800000000","email":"不该落盘"}}"#
             } else if request.starts_with("GET /api/relay/subscription") && authed {
                 r#"{"success":true,"data":{"active":true,"tier":"paid","daily_cap_usd":35}}"#
-            } else if request.starts_with("GET /api/relay/tokens") && authed {
-                // 新建之前只有一把打码的同名密钥（不能用），新建之后列表换成 items 包装的完整密钥。
+            } else if request.starts_with("GET /api/relay/tokens") && second {
+                r#"{"success":true,"data":[{"id":9,"name":"桌面客户端","key":"sk-secondaccountkey99"}]}"#
+            } else if request.starts_with("GET /api/relay/tokens") && first {
+                // 新建之前只有一把打码的同名密钥（不能用），新建之后列表换成 items 包装的完整密钥，另有一把别的密钥和一把打码的。
                 if created.load(Ordering::SeqCst) {
-                    r#"{"success":true,"data":{"items":[{"name":"桌面客户端","key":"realkey"}]}}"#
+                    r#"{"success":true,"data":{"items":[{"id":2,"name":"桌面客户端","key":"realkey"},{"id":3,"name":"我的脚本","key":"sk-scriptkey123456"},{"id":4,"name":"打码","key":"sk-ab**cd"}]}}"#
                 } else {
-                    r#"{"success":true,"data":[{"name":"桌面客户端","key":"sk-ab**cd"}]}"#
+                    r#"{"success":true,"data":[{"id":1,"name":"桌面客户端","key":"sk-ab**cd"}]}"#
                 }
-            } else if request.starts_with("POST /api/relay/tokens") && authed && request.contains("桌面客户端") {
+            } else if request.starts_with("POST /api/relay/tokens") && first && request.contains("桌面客户端") {
                 created.store(true, Ordering::SeqCst);
                 r#"{"success":true}"#
             } else {
@@ -573,9 +580,15 @@ async fn imgenai_account_backend_runs_under_the_real_host() {
     with_extension_backend_cleanup(&[&manager], async {
         let timeout = Duration::from_secs(15);
         let run = |method: &'static str, params: serde_json::Value| call(&manager, IMGENAI_ACCOUNT_KEY, method, params, timeout, None);
+        let set_api_key = |key: &str| {
+            let mut values = serde_json::Map::new();
+            values.insert("apiKey".into(), json!(key));
+            manager.update_extension_config(IMGENAI_ACCOUNT_KEY, &values).unwrap();
+        };
         let state = run("state", json!(null)).await.unwrap();
         assert_eq!(state["ok"], true, "{state}");
         assert_eq!(state["loggedIn"], false);
+        assert_eq!(state["accounts"], json!([]));
         assert_eq!(state["site"], json!(site), "配置里的服务地址传进了后台");
 
         // 没登录：概览直接说没登录，要令牌的接口给 NOT_LOGGED_IN。
@@ -594,6 +607,7 @@ async fn imgenai_account_backend_runs_under_the_real_host() {
         let login = run("login", json!({ "phone": "13800000000", "password": "p" })).await.unwrap();
         assert_eq!(login["ok"], true, "{login}");
         assert_eq!(login["user"], json!({ "id": 1, "phone": "13800000000", "nickname": "" }), "只留界面要用的字段");
+        assert_eq!(login["accounts"], json!([{ "id": "1", "phone": "13800000000", "nickname": "", "active": true }]));
         let session = fs::read_to_string(temp.path().join("extension-data/imgenai-account/session.json")).unwrap();
         assert!(session.contains("t-1") && !session.contains("不该落盘") && !session.contains("\"p\""), "{session}");
         let overview = run("overview", json!(null)).await.unwrap();
@@ -602,7 +616,51 @@ async fn imgenai_account_backend_runs_under_the_real_host() {
 
         // 取密钥：只有打码的同名密钥时新建一把，再从 items 里取完整密钥并补上 sk- 前缀。
         let key = run("ensureKey", json!(null)).await.unwrap();
-        assert_eq!(key, json!({ "ok": true, "key": "sk-realkey", "name": "桌面客户端" }));
+        assert_eq!(key, json!({ "ok": true, "key": "sk-realkey", "name": "桌面客户端", "id": "2" }));
+        set_api_key("sk-realkey");
+
+        // 密钥列表：只给打码后的样子，标出正在用的那把；打码的密钥标成用不了。
+        let keys = run("keys", json!(null)).await.unwrap();
+        assert_eq!(keys["ok"], true, "{keys}");
+        assert!(!keys.to_string().contains("scriptkey123456"), "列表里不能有完整密钥：{keys}");
+        assert_eq!(keys["hasDefaultKey"], true);
+        assert_eq!(
+            keys["keys"],
+            json!([
+                { "id": "2", "name": "桌面客户端", "masked": "sk-…", "usable": true, "current": true, "preferred": false },
+                { "id": "3", "name": "我的脚本", "masked": "sk-scr…3456", "usable": true, "current": false, "preferred": false },
+                { "id": "4", "name": "打码", "masked": "", "usable": false, "current": false, "preferred": false },
+            ])
+        );
+
+        // 改用别的密钥：记在这个账号上，之后 ensureKey 都给这一把。
+        let chosen = run("selectKey", json!({ "id": "3" })).await.unwrap();
+        assert_eq!(chosen, json!({ "ok": true, "key": "sk-scriptkey123456", "name": "我的脚本", "id": "3" }));
+        assert_eq!(run("ensureKey", json!(null)).await.unwrap()["id"], "3");
+        let masked = run("selectKey", json!({ "id": "4" })).await.unwrap();
+        assert_eq!(masked["code"], "KEY_UNAVAILABLE", "{masked}");
+        let gone = run("selectKey", json!({ "id": "404" })).await.unwrap();
+        assert_eq!(gone["code"], "KEY_NOT_FOUND", "{gone}");
+        assert_eq!(run("ensureKey", json!(null)).await.unwrap()["id"], "3", "选错不影响已选的密钥");
+
+        // 再登录第二个账号：成了当前账号，两个账号都保存着；它用自己的默认密钥。
+        let second = run("login", json!({ "phone": "13900000000", "password": "p" })).await.unwrap();
+        assert_eq!(second["user"]["phone"], "13900000000", "{second}");
+        assert_eq!(second["accounts"].as_array().map(Vec::len), Some(2));
+        assert_eq!(run("ensureKey", json!(null)).await.unwrap()["key"], "sk-secondaccountkey99");
+
+        // 切回第一个账号：不用重新登录，选过的密钥还在。
+        let switched = run("switchAccount", json!({ "id": "1" })).await.unwrap();
+        assert_eq!(switched["user"]["phone"], "13800000000", "{switched}");
+        assert_eq!(run("ensureKey", json!(null)).await.unwrap()["key"], "sk-scriptkey123456");
+        let missing = run("switchAccount", json!({ "id": "nope" })).await.unwrap();
+        assert_eq!(missing["code"], "ACCOUNT_NOT_FOUND", "{missing}");
+        // 同一账号重新登录：换新令牌，选过的密钥照样保留。
+        run("login", json!({ "phone": "13800000000", "password": "p" })).await.unwrap();
+        assert_eq!(run("ensureKey", json!(null)).await.unwrap()["id"], "3");
+        // 改回默认密钥。
+        let back = run("selectKey", json!({ "id": "" })).await.unwrap();
+        assert_eq!(back["id"], "2", "{back}");
 
         // 下单：二维码地址 302 之后才是图片，后台跟过去转成 data URL（面板页不放行外部图片）。
         let order = run("createOrder", json!({ "kind": "subscription", "plan": "paid" })).await.unwrap();
@@ -616,16 +674,24 @@ async fn imgenai_account_backend_runs_under_the_real_host() {
         let not_web = run("openUrl", json!({ "url": "file:///etc/passwd" })).await.unwrap();
         assert_eq!(not_web["code"], "INVALID_INPUT", "{not_web}");
 
-        // 网站回 401：当作登录过期，清掉本地令牌。
+        // 网站回 401：只把当前这个账号当作登录过期移除，另一个账号还在，可以切过去。
         let expired = run("freeTrial", json!(null)).await.unwrap();
         assert_eq!((expired["code"].clone(), expired["status"].clone()), (json!("SESSION_EXPIRED"), json!(401)), "{expired}");
-        assert_eq!(run("state", json!(null)).await.unwrap()["loggedIn"], false);
+        let state = run("state", json!(null)).await.unwrap();
+        assert_eq!(state["loggedIn"], false, "{state}");
+        assert_eq!(state["accounts"], json!([{ "id": "2", "phone": "13900000000", "nickname": "二号", "active": false }]));
+        assert_eq!(run("switchAccount", json!({ "id": "2" })).await.unwrap()["ok"], true);
 
         let unknown = run("noSuchMethod", json!(null)).await.unwrap_err();
         assert!(unknown.to_string().contains("后台没有方法"), "{unknown}");
 
+        // 退出当前账号时还有别的账号：自动换成剩下的那个；退出最后一个账号后什么都不留。
+        run("login", json!({ "phone": "13800000000", "password": "p" })).await.unwrap();
         let logout = run("logout", json!(null)).await.unwrap();
-        assert_eq!(logout, json!({ "ok": true }));
+        assert_eq!((logout["loggedIn"].clone(), logout["user"]["phone"].clone()), (json!(true), json!("13900000000")), "{logout}");
+        let logout = run("logout", json!(null)).await.unwrap();
+        assert_eq!(logout, json!({ "ok": true, "loggedIn": false, "user": null, "accounts": [] }));
+        assert!(!temp.path().join("extension-data/imgenai-account/session.json").exists(), "最后一个账号退出后删掉登录文件");
     })
     .await;
     server.abort();

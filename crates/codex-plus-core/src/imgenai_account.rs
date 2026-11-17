@@ -6,6 +6,9 @@
 //!
 //! - 只保存网站返回的登录令牌，不保存密码；令牌写在拓展数据目录的 `session.json`（权限 0600），
 //!   位置与原来的 Node 后台相同，升级后不用重新登录。
+//! - 可以同时保存多个账号，同一时间只有一个「当前账号」：页面用它的密钥填拓展配置 `apiKey`，
+//!   供应商池里的 imgenai 就跟着用这个账号。切换账号不用重新输密码。
+//! - 每个账号记住自己选的中转密钥（网站上的任意一把）；没选过时用名为「桌面客户端」的那把，没有就新建。
 //! - 每个方法都返回 `{ ok: true, ... }` 或 `{ ok: false, code, status, message }`，页面按 code 决定下一步。
 //! - 网络请求和客户端其它外部请求一样走系统代理 / 代理环境变量。
 
@@ -45,21 +48,25 @@ impl ApiError {
 
 type ApiResult<T> = Result<T, ApiError>;
 
-/// 后台调用入口。`config` 是拓展的生效配置（读 `siteBase`），`data_dir` 是拓展数据目录。
+/// 后台调用入口。`config` 是拓展的生效配置（读 `siteBase` 和正在用的 `apiKey`），`data_dir` 是拓展数据目录。
 /// 方法名不认识时返回 Err，和其它拓展后台「没有这个方法」的报错一致；其余情况都返回带 ok 的对象。
 pub async fn call(config: &Value, data_dir: &Path, method: &str, params: &Value) -> anyhow::Result<Value> {
-    let account = Account { site: normalize_site(config.get("siteBase")), session_file: data_dir.join("session.json") };
+    let account = Account {
+        site: normalize_site(config.get("siteBase")),
+        session_file: data_dir.join("session.json"),
+        current_key: config.get("apiKey").and_then(Value::as_str).unwrap_or_default().trim().to_string(),
+    };
     let empty = Value::Object(Map::new());
     let params = if params.is_object() { params } else { &empty };
     let outcome = match method {
         "state" => Ok(account.state()),
         "login" => account.login(params).await,
-        "logout" => {
-            account.clear_session();
-            Ok(json!({}))
-        }
+        "logout" => account.logout(),
+        "switchAccount" => account.switch_account(params),
         "overview" => account.overview().await,
         "ensureKey" => account.ensure_key().await,
+        "keys" => account.keys().await,
+        "selectKey" => account.select_key(params).await,
         "freeTrial" => account.post_message("/api/relay/free-trial", "已开通免费试用").await,
         "useResetCard" => account.post_message("/api/relay/reset-card/use", "已使用重置卡").await,
         "createOrder" => account.create_order(params).await,
@@ -84,20 +91,98 @@ pub async fn call(config: &Value, data_dir: &Path, method: &str, params: &Value)
 struct Account {
     site: String,
     session_file: PathBuf,
+    /// 拓展配置里正在用的中转密钥，用来在密钥列表里标出「当前使用」的那把。
+    current_key: String,
+}
+
+/// 本地保存的登录账号。文件里写成 `{ "active": 账号 id, "accounts": [{ id, token, user, savedAt, keyId? }] }`；
+/// 1.0.4 及更早只存一个账号（`{ token, user, savedAt }`），读的时候当成只有这一个账号，下次写入时换成新格式。
+#[derive(Default)]
+struct Sessions {
+    active: Option<String>,
+    accounts: Vec<Value>,
+}
+
+impl Sessions {
+    fn parse(raw: &Value) -> Self {
+        if let Some(list) = raw.get("accounts").and_then(Value::as_array) {
+            let accounts: Vec<Value> = list.iter().filter(|entry| has_token(entry) && entry_id(entry).is_some()).cloned().collect();
+            let active = text_of(raw.get("active")).filter(|id| accounts.iter().any(|entry| entry_id(entry).as_deref() == Some(id)));
+            return Self { active, accounts };
+        }
+        if !has_token(raw) {
+            return Self::default();
+        }
+        let mut entry = raw.clone();
+        let id = account_id(raw.get("user"));
+        entry["id"] = json!(id);
+        Self { active: Some(id), accounts: vec![entry] }
+    }
+
+    fn find(&self, id: &str) -> Option<&Value> {
+        self.accounts.iter().find(|entry| entry_id(entry).as_deref() == Some(id))
+    }
+
+    fn active_entry(&self) -> Option<&Value> {
+        self.active.as_deref().and_then(|id| self.find(id))
+    }
+
+    fn active_entry_mut(&mut self) -> Option<&mut Value> {
+        let id = self.active.clone()?;
+        self.accounts.iter_mut().find(|entry| entry_id(entry).as_deref() == Some(id.as_str()))
+    }
+
+    fn remove(&mut self, id: &str) {
+        self.accounts.retain(|entry| entry_id(entry).as_deref() != Some(id));
+        if self.active.as_deref() == Some(id) {
+            self.active = None;
+        }
+    }
+
+    /// 给页面看的账号列表：不含令牌。
+    fn summary(&self) -> Value {
+        Value::Array(
+            self.accounts
+                .iter()
+                .map(|entry| {
+                    let user = entry.get("user");
+                    json!({
+                        "id": entry_id(entry),
+                        "phone": text_of(user.and_then(|user| user.get("phone"))).unwrap_or_default(),
+                        "nickname": text_of(user.and_then(|user| user.get("nickname"))).unwrap_or_default(),
+                        "active": entry_id(entry) == self.active,
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    fn user(&self) -> Value {
+        self.active_entry().and_then(|entry| entry.get("user")).cloned().unwrap_or(Value::Null)
+    }
 }
 
 impl Account {
-    fn read_session(&self) -> Option<Value> {
-        let session: Value = serde_json::from_slice(&std::fs::read(&self.session_file).ok()?).ok()?;
-        session.get("token").and_then(Value::as_str).is_some_and(|token| !token.is_empty()).then_some(session)
+    fn read_sessions(&self) -> Sessions {
+        std::fs::read(&self.session_file)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .map(|raw| Sessions::parse(&raw))
+            .unwrap_or_default()
     }
 
-    fn write_session(&self, session: &Value) -> ApiResult<()> {
+    /// 写回账号列表；一个账号都不剩时删掉文件。
+    fn write_sessions(&self, sessions: &Sessions) -> ApiResult<()> {
+        if sessions.accounts.is_empty() {
+            let _ = std::fs::remove_file(&self.session_file);
+            return Ok(());
+        }
         let fail = |error: std::io::Error| ApiError::new(format!("保存登录状态失败：{error}"));
         if let Some(parent) = self.session_file.parent() {
             std::fs::create_dir_all(parent).map_err(fail)?;
         }
-        std::fs::write(&self.session_file, session.to_string()).map_err(fail)?;
+        let body = json!({ "active": sessions.active, "accounts": sessions.accounts });
+        std::fs::write(&self.session_file, body.to_string()).map_err(fail)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -106,21 +191,20 @@ impl Account {
         Ok(())
     }
 
-    fn clear_session(&self) {
-        let _ = std::fs::remove_file(&self.session_file);
-    }
-
-    /// 调网站接口：带上登录令牌，401 当作登录过期并清掉本地令牌；`success: false` 转成 ApiError。
+    /// 调网站接口：带上当前账号的登录令牌，401 当作这个账号登录过期、把它从本地移除；`success: false` 转成 ApiError。
     async fn api(&self, method: reqwest::Method, path: &str, body: Option<Value>, auth: bool) -> ApiResult<Value> {
         let url = format!("{}{path}", self.site);
         let client = client_for(&url)?;
         let mut request = client.request(method, &url).header("Accept", "application/json");
+        let mut account_id = None;
         if auth {
-            let session = self
-                .read_session()
+            let sessions = self.read_sessions();
+            let entry = sessions
+                .active_entry()
                 .ok_or(ApiError { status: 401, ..ApiError::code("请先登录 imgenai 账号", "NOT_LOGGED_IN") })?;
-            let token = session.get("token").and_then(Value::as_str).unwrap_or_default();
+            let token = entry.get("token").and_then(Value::as_str).unwrap_or_default();
             request = request.header("Authorization", format!("Bearer {token}"));
+            account_id = entry_id(entry);
         }
         if let Some(body) = body {
             request = request.header("Content-Type", "application/json").body(body.to_string());
@@ -128,7 +212,11 @@ impl Account {
         let (status, _, bytes) = send(request, MAX_JSON_BYTES).await?;
         let json: Option<Value> = serde_json::from_slice(&bytes).ok();
         if auth && status == 401 {
-            self.clear_session();
+            if let Some(id) = account_id {
+                let mut sessions = self.read_sessions();
+                sessions.remove(&id);
+                let _ = self.write_sessions(&sessions);
+            }
             return Err(ApiError { status: 401, ..ApiError::code("登录已过期，请重新登录", "SESSION_EXPIRED") });
         }
         let refused = json.as_ref().and_then(|json| json.get("success")) == Some(&Value::Bool(false));
@@ -147,14 +235,16 @@ impl Account {
     }
 
     fn state(&self) -> Value {
-        let session = self.read_session();
+        let sessions = self.read_sessions();
         json!({
-            "loggedIn": session.is_some(),
-            "user": session.as_ref().and_then(|session| session.get("user")).cloned().unwrap_or(Value::Null),
+            "loggedIn": sessions.active_entry().is_some(),
+            "user": sessions.user(),
+            "accounts": sessions.summary(),
             "site": self.site,
         })
     }
 
+    /// 登录并设为当前账号；已经保存过的账号（同一个用户）更新令牌，保留它选过的密钥。
     async fn login(&self, params: &Value) -> ApiResult<Value> {
         let phone = params.get("phone").and_then(text_value).unwrap_or_default().trim().to_string();
         let password = params.get("password").and_then(text_value).unwrap_or_default();
@@ -170,17 +260,73 @@ impl Account {
             return Err(ApiError::code(message, "LOGIN_FAILED"));
         };
         let user = pick_user(json.get("user"), &phone);
-        self.write_session(&json!({ "token": token, "user": user, "savedAt": now_millis() }))?;
-        Ok(json!({ "user": user }))
+        let id = account_id(Some(&user));
+        let mut sessions = self.read_sessions();
+        let mut entry = json!({ "id": id, "token": token, "user": user, "savedAt": now_millis() });
+        if let Some(key_id) = sessions.find(&id).and_then(|old| old.get("keyId")).cloned() {
+            entry["keyId"] = key_id;
+        }
+        match sessions.accounts.iter_mut().find(|old| entry_id(old).as_deref() == Some(id.as_str())) {
+            Some(old) => *old = entry,
+            None => sessions.accounts.push(entry),
+        }
+        sessions.active = Some(id);
+        self.write_sessions(&sessions)?;
+        Ok(json!({ "user": user, "accounts": sessions.summary() }))
+    }
+
+    /// 退出当前账号；还保存着别的账号时换成第一个，页面接着给它配密钥。
+    fn logout(&self) -> ApiResult<Value> {
+        let mut sessions = self.read_sessions();
+        if let Some(id) = sessions.active.clone() {
+            sessions.remove(&id);
+        }
+        sessions.active = sessions.accounts.first().and_then(entry_id);
+        self.write_sessions(&sessions)?;
+        Ok(json!({ "loggedIn": sessions.active.is_some(), "user": sessions.user(), "accounts": sessions.summary() }))
+    }
+
+    fn switch_account(&self, params: &Value) -> ApiResult<Value> {
+        let id = params.get("id").and_then(text_value).unwrap_or_default();
+        let mut sessions = self.read_sessions();
+        if sessions.find(&id).is_none() {
+            return Err(ApiError::code("这个账号已经不在本机了，请重新登录", "ACCOUNT_NOT_FOUND"));
+        }
+        sessions.active = Some(id);
+        self.write_sessions(&sessions)?;
+        Ok(json!({ "user": sessions.user(), "accounts": sessions.summary() }))
+    }
+
+    /// 记下当前账号选的密钥（None 表示用默认的「桌面客户端」密钥）。
+    fn set_preferred_key(&self, key_id: Option<&str>) -> ApiResult<()> {
+        let mut sessions = self.read_sessions();
+        let Some(entry) = sessions.active_entry_mut() else {
+            return Err(ApiError { status: 401, ..ApiError::code("请先登录 imgenai 账号", "NOT_LOGGED_IN") });
+        };
+        match (entry.as_object_mut(), key_id) {
+            (Some(fields), Some(key_id)) => {
+                fields.insert("keyId".into(), json!(key_id));
+            }
+            (Some(fields), None) => {
+                fields.remove("keyId");
+            }
+            _ => {}
+        }
+        self.write_sessions(&sessions)
+    }
+
+    fn preferred_key(&self) -> Option<String> {
+        text_of(self.read_sessions().active_entry().and_then(|entry| entry.get("keyId")))
     }
 
     async fn overview(&self) -> ApiResult<Value> {
-        let Some(session) = self.read_session() else {
+        let sessions = self.read_sessions();
+        if sessions.active_entry().is_none() {
             return Ok(json!({ "loggedIn": false }));
-        };
+        }
         let sub = unwrap(self.api(reqwest::Method::GET, "/api/relay/subscription", None, true).await?);
         let sub = if sub.is_object() || sub.is_array() { sub } else { Value::Null };
-        Ok(json!({ "loggedIn": true, "user": session.get("user").cloned().unwrap_or(Value::Null), "sub": sub }))
+        Ok(json!({ "loggedIn": true, "user": sessions.user(), "accounts": sessions.summary(), "sub": sub }))
     }
 
     async fn list_tokens(&self) -> ApiResult<Vec<Value>> {
@@ -195,17 +341,66 @@ impl Account {
         })
     }
 
-    /// 取客户端专用密钥，没有就新建；没订阅时网站会拒绝新建（RELAY_NO_SUBSCRIPTION / RELAY_NOT_ENABLED）。
+    /// 当前账号要用的密钥：选过的那把还在就用它，否则用「桌面客户端」，没有就新建；
+    /// 没订阅时网站会拒绝新建（RELAY_NO_SUBSCRIPTION / RELAY_NOT_ENABLED）。
     async fn ensure_key(&self) -> ApiResult<Value> {
-        let mut token = pick_token(self.list_tokens().await?);
+        let tokens = self.list_tokens().await?;
+        if let Some(preferred) = self.preferred_key() {
+            if let Some(token) = tokens.iter().find(|token| token_id(token).as_deref() == Some(preferred.as_str())).filter(|token| usable_key(token).is_some()) {
+                return Ok(key_result(token));
+            }
+            // 选过的密钥在网站上删掉了（或拿不到完整内容）：回到默认密钥。
+            self.set_preferred_key(None)?;
+        }
+        let mut token = pick_token(&tokens).cloned();
         if token.is_none() {
             self.api(reqwest::Method::POST, "/api/relay/tokens", Some(json!({ "name": KEY_NAME })), true).await?;
-            token = pick_token(self.list_tokens().await?);
+            token = pick_token(&self.list_tokens().await?).cloned();
         }
-        let Some(key) = token else {
-            return Err(ApiError::code("没有拿到中转密钥，请到官网「API 中转」页面查看", "KEY_UNAVAILABLE"));
+        match token {
+            Some(token) => Ok(key_result(&token)),
+            None => Err(ApiError::code("没有拿到中转密钥，请到官网「API 中转」页面查看", "KEY_UNAVAILABLE")),
+        }
+    }
+
+    /// 当前账号在网站上的全部密钥，只给打码后的样子；`current` 标出拓展配置里正在用的那把。
+    async fn keys(&self) -> ApiResult<Value> {
+        let tokens = self.list_tokens().await?;
+        let preferred = self.preferred_key();
+        let keys: Vec<Value> = tokens
+            .iter()
+            .filter_map(|token| {
+                let id = token_id(token)?;
+                let key = usable_key(token);
+                Some(json!({
+                    "id": id,
+                    "name": token.get("name").and_then(text_value).unwrap_or_default(),
+                    "masked": key.as_deref().map(mask_key).unwrap_or_default(),
+                    "usable": key.is_some(),
+                    "current": key.as_deref().is_some_and(|key| !self.current_key.is_empty() && key == self.current_key),
+                    "preferred": preferred.as_deref() == Some(id.as_str()),
+                }))
+            })
+            .collect();
+        Ok(json!({ "keys": keys, "hasDefaultKey": pick_token(&tokens).is_some(), "defaultName": KEY_NAME }))
+    }
+
+    /// 改用网站上的某一把密钥并记住；id 为空表示改回默认的「桌面客户端」密钥（没有就新建）。
+    async fn select_key(&self, params: &Value) -> ApiResult<Value> {
+        let id = params.get("id").and_then(text_value).unwrap_or_default().trim().to_string();
+        if id.is_empty() {
+            self.set_preferred_key(None)?;
+            return self.ensure_key().await;
+        }
+        let tokens = self.list_tokens().await?;
+        let Some(token) = tokens.iter().find(|token| token_id(token).as_deref() == Some(id.as_str())) else {
+            return Err(ApiError::code("这把密钥在网站上已经删除了，请刷新后重选", "KEY_NOT_FOUND"));
         };
-        Ok(json!({ "key": normalize_key(&key), "name": KEY_NAME }))
+        if usable_key(token).is_none() {
+            return Err(ApiError::code("网站没有给出这把密钥的完整内容，客户端用不了，请换一把", "KEY_UNAVAILABLE"));
+        }
+        self.set_preferred_key(Some(&id))?;
+        Ok(key_result(token))
     }
 
     async fn post_message(&self, path: &str, fallback: &str) -> ApiResult<Value> {
@@ -396,12 +591,54 @@ fn pick_user(user: Option<&Value>, phone: &str) -> Value {
     })
 }
 
-/// 列表里能直接用的密钥：名字对得上，且不是打码后的（含 * 的说明网站只给了掩码）。
-fn pick_token(list: Vec<Value>) -> Option<String> {
-    list.into_iter().find_map(|token| {
-        let key = token.get("key").and_then(Value::as_str)?;
-        (token.get("name").and_then(Value::as_str) == Some(KEY_NAME) && !key.is_empty() && !key.contains('*')).then(|| key.to_string())
+/// 列表里的默认密钥：名字是「桌面客户端」，且拿得到完整内容。
+fn pick_token(list: &[Value]) -> Option<&Value> {
+    list.iter().find(|token| token.get("name").and_then(Value::as_str) == Some(KEY_NAME) && usable_key(token).is_some())
+}
+
+/// 密钥的完整内容（补上 sk- 前缀）；空的或打码的（含 * 说明网站只给了掩码）返回 None。
+fn usable_key(token: &Value) -> Option<String> {
+    let key = token.get("key").and_then(Value::as_str)?.trim();
+    (!key.is_empty() && !key.contains('*')).then(|| normalize_key(key))
+}
+
+fn token_id(token: &Value) -> Option<String> {
+    text_of(token.get("id"))
+}
+
+/// 选中 / 默认密钥交给页面的内容：页面拿 key 填拓展配置 apiKey。
+fn key_result(token: &Value) -> Value {
+    json!({
+        "key": usable_key(token).unwrap_or_default(),
+        "name": token.get("name").and_then(text_value).unwrap_or_default(),
+        "id": token_id(token),
     })
+}
+
+/// 列表里显示的样子：前 6 位 + … + 后 4 位，和账户页原来的写法一致。
+fn mask_key(key: &str) -> String {
+    let chars: Vec<char> = key.chars().collect();
+    if chars.len() <= 12 {
+        return "sk-…".into();
+    }
+    let head: String = chars[..6].iter().collect();
+    let tail: String = chars[chars.len() - 4..].iter().collect();
+    format!("{head}…{tail}")
+}
+
+fn has_token(entry: &Value) -> bool {
+    entry.get("token").and_then(Value::as_str).is_some_and(|token| !token.is_empty())
+}
+
+fn entry_id(entry: &Value) -> Option<String> {
+    text_of(entry.get("id"))
+}
+
+/// 账号在本机的标识：网站的用户 id，没有时用手机号。
+fn account_id(user: Option<&Value>) -> String {
+    text_of(user.and_then(|user| user.get("id")))
+        .or_else(|| text_of(user.and_then(|user| user.get("phone"))))
+        .unwrap_or_else(|| "default".into())
 }
 
 fn normalize_key(key: &str) -> String {
@@ -456,13 +693,47 @@ mod tests {
     #[test]
     fn token_must_be_named_and_unmasked() {
         let list = vec![
-            json!({ "name": KEY_NAME, "key": "sk-ab**cd" }),
-            json!({ "name": "别的", "key": "sk-other" }),
-            json!({ "name": KEY_NAME, "key": "plain" }),
+            json!({ "id": 1, "name": KEY_NAME, "key": "sk-ab**cd" }),
+            json!({ "id": 2, "name": "别的", "key": "sk-other" }),
+            json!({ "id": 3, "name": KEY_NAME, "key": "plain" }),
         ];
-        assert_eq!(pick_token(list).as_deref(), Some("plain"));
+        let picked = pick_token(&list).unwrap();
+        assert_eq!(key_result(picked), json!({ "key": "sk-plain", "name": KEY_NAME, "id": "3" }));
+        assert_eq!(usable_key(&list[0]), None, "打码的密钥用不了");
         assert_eq!(normalize_key("plain"), "sk-plain");
         assert_eq!(normalize_key("sk-x"), "sk-x");
+    }
+
+    #[test]
+    fn key_mask_keeps_head_and_tail() {
+        assert_eq!(mask_key("sk-abcdefghijklmnop"), "sk-abc…mnop");
+        assert_eq!(mask_key("sk-short"), "sk-…");
+    }
+
+    #[test]
+    fn old_single_session_reads_as_one_account() {
+        let old = json!({ "token": "t", "user": { "id": 7, "phone": "138" }, "savedAt": 1 });
+        let sessions = Sessions::parse(&old);
+        assert_eq!(sessions.active.as_deref(), Some("7"));
+        assert_eq!(sessions.active_entry().and_then(|entry| entry.get("token")), Some(&json!("t")));
+        assert_eq!(sessions.summary(), json!([{ "id": "7", "phone": "138", "nickname": "", "active": true }]));
+        assert!(Sessions::parse(&json!({ "token": "" })).accounts.is_empty());
+    }
+
+    #[test]
+    fn sessions_drop_bad_entries_and_unknown_active() {
+        let raw = json!({
+            "active": "9",
+            "accounts": [
+                { "id": "1", "token": "a", "user": { "phone": "1" } },
+                { "id": "2", "token": "" },
+                { "token": "no-id" },
+            ],
+        });
+        let sessions = Sessions::parse(&raw);
+        assert_eq!(sessions.accounts.len(), 1);
+        assert_eq!(sessions.active, None, "当前账号不在列表里时当作没有当前账号");
+        assert_eq!(account_id(Some(&json!({ "id": null, "phone": "139" }))), "139");
     }
 
     #[test]

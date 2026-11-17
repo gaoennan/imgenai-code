@@ -59,7 +59,16 @@
     color: var(--text);
     font: inherit;
   }
-  input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+  select {
+    max-width: 100%;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--card);
+    color: var(--text);
+    font: inherit;
+  }
+  input:focus, select:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
   button {
     padding: 7px 14px;
     border-radius: 7px;
@@ -104,8 +113,12 @@
 <body>
   <!-- 未登录 -->
   <section id="login-view" class="card hidden">
-    <h2>登录 imgenai 账号</h2>
-    <div class="muted">登录后自动配置中转密钥，Codex 里直接选 imgenai 的模型即可使用。</div>
+    <h2 id="login-title">登录 imgenai 账号</h2>
+    <div class="muted" id="login-sub">登录后自动配置中转密钥，Codex 里直接选 imgenai 的模型即可使用。</div>
+    <div class="hidden" id="saved-accounts" style="margin-top: 10px">
+      <div class="muted">也可以切换到本机已登录的账号：</div>
+      <div class="row" id="saved-account-list" style="margin-top: 6px"></div>
+    </div>
     <form id="login-form" autocomplete="on">
       <label for="phone">手机号</label>
       <input id="phone" name="phone" inputmode="numeric" autocomplete="username" placeholder="注册时用的手机号">
@@ -118,7 +131,10 @@
           <span class="muted">·</span>
           <button type="button" class="link" data-site="">忘记密码</button>
         </div>
-        <button type="submit" class="primary" id="login-btn">登录</button>
+        <div class="row">
+          <button type="button" class="hidden" id="login-cancel-btn">返回</button>
+          <button type="submit" class="primary" id="login-btn">登录</button>
+        </div>
       </div>
     </form>
   </section>
@@ -136,8 +152,13 @@
         </div>
         <div class="row">
           <button id="refresh-btn">刷新</button>
+          <button id="add-account-btn">添加账号</button>
           <button id="logout-btn">退出登录</button>
         </div>
+      </div>
+      <div class="row hidden" id="switch-row" style="margin-top: 10px">
+        <span class="muted">切换账号</span>
+        <select id="account-select"></select>
       </div>
     </div>
 
@@ -182,11 +203,14 @@
       <h3>客户端接入</h3>
       <div class="row spread">
         <div class="grow">
+          <div class="row hidden" id="key-select-row" style="margin-bottom: 6px">
+            <span class="muted">使用的密钥</span>
+            <select id="key-select"></select>
+          </div>
           <div id="key-status">—</div>
           <div class="muted" id="key-hint"></div>
         </div>
         <div class="row">
-          <button id="key-btn">重新获取密钥</button>
           <button id="agents-btn">去选模型</button>
         </div>
       </div>
@@ -242,7 +266,11 @@
     { key: "paid", name: "标准档", price: 68, cap: 35 },
     { key: "pro", name: "专业档", price: 128, cap: 90 },
   ];
-  let state = { sub: null, user: null, plan: "paid", order: null, poll: null, busy: false };
+  let state = { sub: null, user: null, accounts: [], plan: "paid", order: null, poll: null, busy: false };
+  const accountLabel = (account) => {
+    const phone = maskPhone(account?.phone || "");
+    return account?.nickname ? `${phone}（${account.nickname}）` : phone;
+  };
 
   api.onTheme?.((theme) => { document.documentElement.dataset.theme = theme; });
   if (api.theme) document.documentElement.dataset.theme = api.theme();
@@ -257,9 +285,74 @@
     if (result.ok && result.loggedIn) {
       await refresh();
     } else {
-      show("login-view");
+      await showLogin();
     }
   }
+
+  // ---------- 账号 ----------
+  // 登录页两种用法：没有当前账号时登录（列出本机还保存着的账号，点一下就能切过去），
+  // 或者已登录时「添加账号」（有「返回」按钮回到当前账号）。
+  async function showLogin({ adding = false, message = "", phone = "" } = {}) {
+    $("login-title").textContent = adding ? "添加 imgenai 账号" : "登录 imgenai 账号";
+    $("login-sub").textContent = adding
+      ? "登录后切换到这个账号，原来的账号仍保存在本机，随时可以切回。"
+      : "登录后自动配置中转密钥，Codex 里直接选 imgenai 的模型即可使用。";
+    $("login-cancel-btn").classList.toggle("hidden", !adding);
+    $("login-error").textContent = message;
+    $("phone").value = phone;
+    $("password").value = "";
+    let saved = [];
+    if (!adding) {
+      const result = await call("state");
+      saved = result.ok && Array.isArray(result.accounts) ? result.accounts : [];
+    }
+    const list = $("saved-account-list");
+    list.textContent = "";
+    for (const account of saved) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = accountLabel(account);
+      button.addEventListener("click", () => switchTo(account.id));
+      list.append(button);
+    }
+    $("saved-accounts").classList.toggle("hidden", saved.length === 0);
+    show("login-view");
+  }
+
+  function renderAccounts() {
+    const accounts = state.accounts || [];
+    $("switch-row").classList.toggle("hidden", accounts.length < 2);
+    const select = $("account-select");
+    select.textContent = "";
+    for (const account of accounts) {
+      const option = document.createElement("option");
+      option.value = account.id;
+      option.textContent = accountLabel(account);
+      option.selected = !!account.active;
+      select.append(option);
+    }
+  }
+
+  // 换了当前账号之后：刷新页面并给新账号配上它自己的密钥（没订阅的账号清空密钥，免得还在用上一个账号的）。
+  async function afterAccountChange(toast) {
+    await refresh();
+    await syncKey({ quiet: true, clearOnFail: true });
+    if (toast) api.toast?.(toast);
+  }
+
+  async function switchTo(id) {
+    const result = await call("switchAccount", { id });
+    if (!result.ok) {
+      api.toast?.(result.message || "切换账号失败");
+      renderAccounts();
+      return;
+    }
+    await afterAccountChange(`已切换到 ${accountLabel(result.user)}`);
+  }
+
+  $("account-select").addEventListener("change", (event) => switchTo(event.target.value));
+  $("add-account-btn").addEventListener("click", () => showLogin({ adding: true }));
+  $("login-cancel-btn").addEventListener("click", () => refresh());
 
   // ---------- 登录 ----------
   $("login-form").addEventListener("submit", async (event) => {
@@ -279,19 +372,21 @@
       $("login-error").textContent = result.message || "登录失败";
       return;
     }
-    await refresh();
-    await syncKey({ quiet: true });
+    const multiple = (result.accounts || []).length > 1;
+    await afterAccountChange(multiple ? `已登录并切换到 ${accountLabel(result.user)}` : "");
   });
 
+  // 退出当前账号：本机还有别的账号就切过去，否则清掉密钥、回到登录页。
   $("logout-btn").addEventListener("click", async () => {
-    await call("logout");
-    try {
-      await api.config.set({ apiKey: "" });
-    } catch (error) {
-      // 拓展停用时写不了配置，忽略。
-    }
+    const leaving = accountLabel(state.user);
+    const result = await call("logout");
     state.sub = null;
-    show("login-view");
+    if (result.ok && result.loggedIn) {
+      await afterAccountChange(`已退出 ${leaving}，切换到 ${accountLabel(result.user)}`);
+      return;
+    }
+    await setApiKey("");
+    await showLogin();
     api.toast?.("已退出登录，客户端密钥已清除，imgenai 已移出供应商池");
   });
 
@@ -302,8 +397,7 @@
     const result = await call("overview");
     if (!result.ok) {
       if (result.code === "SESSION_EXPIRED" || result.code === "NOT_LOGGED_IN") {
-        show("login-view");
-        $("login-error").textContent = result.message;
+        await showLogin({ message: result.message, phone: state.user?.phone || "" });
         return;
       }
       show("account-view");
@@ -311,14 +405,16 @@
       return;
     }
     if (!result.loggedIn) {
-      show("login-view");
+      await showLogin();
       return;
     }
     state.user = result.user;
+    state.accounts = result.accounts || [];
     state.sub = result.sub || {};
     render();
+    renderAccounts();
     show("account-view");
-    await renderKeyStatus();
+    await renderKeys();
   }
 
   function render() {
@@ -408,7 +504,7 @@
     button.disabled = false;
     if (!result.ok) {
       api.toast?.(result.message || "操作失败");
-      if (result.code === "SESSION_EXPIRED") show("login-view");
+      if (result.code === "SESSION_EXPIRED") await showLogin({ message: result.message, phone: state.user?.phone || "" });
     }
     return result;
   }
@@ -488,8 +584,7 @@
       const result = await call("orderStatus", { tradeOrderId });
       if (result.ok === false && result.code === "SESSION_EXPIRED") {
         stopPolling();
-        show("login-view");
-        $("login-error").textContent = "登录已过期，重新登录后订单会自动到账";
+        await showLogin({ message: "登录已过期，重新登录后订单会自动到账", phone: state.user?.phone || "" });
         return;
       }
       if (result.ok && result.status === "paid") {
@@ -512,6 +607,9 @@
   });
 
   // ---------- 客户端密钥 ----------
+  // 页面把选中的密钥写进拓展配置 apiKey，供应商池里的 imgenai 就用它；后台只负责从网站取密钥、记住每个账号选的是哪把。
+  const NO_SUBSCRIPTION = ["RELAY_NO_SUBSCRIPTION", "RELAY_NOT_ENABLED", "KEY_UNAVAILABLE"];
+
   async function currentKey() {
     try {
       const values = await api.config.get();
@@ -521,42 +619,95 @@
     }
   }
 
-  async function renderKeyStatus() {
-    const key = await currentKey();
-    const active = !!state.sub?.active;
-    $("key-status").textContent = key ? `已配置（${key.slice(0, 6)}…${key.slice(-4)}）` : "未配置";
-    $("key-hint").textContent = key
-      ? "已自动加入供应商池。接入 Codex 后选 imgenai 开头的模型即可。"
-      : active ? "点「重新获取密钥」自动配置。" : "开通订阅或领取试用后会自动配置。";
-  }
-
-  async function syncKey({ quiet } = {}) {
-    const result = await call("ensureKey");
-    if (!result.ok) {
-      if (!quiet || !["RELAY_NO_SUBSCRIPTION", "RELAY_NOT_ENABLED"].includes(result.code)) {
-        api.toast?.(result.message || "获取密钥失败");
-      }
-      await renderKeyStatus();
+  async function setApiKey(key) {
+    try {
+      await api.config.set({ apiKey: key });
+      return true;
+    } catch (error) {
+      // 拓展停用时写不了配置。
+      if (key) api.toast?.(`保存密钥失败：${error?.message || error}`);
       return false;
     }
-    if (result.key && result.key !== (await currentKey())) {
-      try {
-        await api.config.set({ apiKey: result.key });
-      } catch (error) {
-        api.toast?.(`保存密钥失败：${error?.message || error}`);
-        return false;
+  }
+
+  // 列出这个账号在网站上的密钥（只有打码后的样子），标出正在用的那把。
+  async function renderKeys() {
+    const key = await currentKey();
+    const active = !!state.sub?.active;
+    const result = await call("keys");
+    const select = $("key-select");
+    select.textContent = "";
+    const keys = result.ok && Array.isArray(result.keys) ? result.keys : [];
+    const usable = keys.filter((item) => item.usable);
+    const showSelect = result.ok && (usable.length > 0 || (active && !result.hasDefaultKey));
+    $("key-select-row").classList.toggle("hidden", !showSelect);
+    const current = keys.find((item) => item.current);
+    if (showSelect) {
+      if (!current) {
+        const placeholder = document.createElement("option");
+        placeholder.value = "__none__";
+        placeholder.disabled = true;
+        placeholder.selected = true;
+        placeholder.textContent = key ? "正在用的密钥不属于这个账号，请选一把" : "选择要用的密钥";
+        select.append(placeholder);
+      }
+      for (const item of keys) {
+        const option = document.createElement("option");
+        option.value = item.id;
+        option.disabled = !item.usable;
+        option.selected = !!item.current;
+        option.textContent = item.usable ? `${item.name || "未命名"} · ${item.masked}` : `${item.name || "未命名"}（网站没给完整密钥，不能用）`;
+        select.append(option);
+      }
+      if (active && !result.hasDefaultKey) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = `新建「${result.defaultName || "桌面客户端"}」密钥`;
+        select.append(option);
       }
     }
+    $("key-status").textContent = current
+      ? `正在使用「${current.name || "未命名"}」`
+      : key ? `已配置（${key.slice(0, 6)}…${key.slice(-4)}）` : "未配置";
+    $("key-hint").textContent = key
+      ? "已自动加入供应商池。接入 Codex 后选 imgenai 开头的模型即可；网站上新建的密钥也可以在这里切换使用。"
+      : active ? "在上面选一把密钥，或新建客户端专用密钥。" : "开通订阅或领取试用后会自动配置。";
+    if (!result.ok && result.code === "SESSION_EXPIRED") await showLogin({ message: result.message, phone: state.user?.phone || "" });
+  }
+
+  // 给当前账号配上它的密钥（选过的那把，没选过就用客户端专用密钥）。
+  // clearOnFail：换了账号而新账号拿不到密钥（没订阅）时清空，别继续用上一个账号的密钥。
+  async function syncKey({ quiet, clearOnFail } = {}) {
+    const result = await call("ensureKey");
+    if (!result.ok) {
+      if (clearOnFail && NO_SUBSCRIPTION.includes(result.code)) await setApiKey("");
+      if (!quiet || !NO_SUBSCRIPTION.includes(result.code)) {
+        api.toast?.(result.message || "获取密钥失败");
+      }
+      await renderKeys();
+      return false;
+    }
+    if (result.key && result.key !== (await currentKey()) && !(await setApiKey(result.key))) {
+      return false;
+    }
     if (!quiet) api.toast?.("密钥已配置");
-    await renderKeyStatus();
+    await renderKeys();
     return true;
   }
 
-  $("key-btn").addEventListener("click", async () => {
-    $("key-btn").disabled = true;
-    await syncKey({ quiet: false });
-    $("key-btn").disabled = false;
+  $("key-select").addEventListener("change", async (event) => {
+    const select = event.target;
+    select.disabled = true;
+    const result = await call("selectKey", { id: select.value });
+    select.disabled = false;
+    if (!result.ok) {
+      api.toast?.(result.message || "切换密钥失败");
+    } else if (await setApiKey(result.key)) {
+      api.toast?.(`已改用密钥「${result.name || "未命名"}」`);
+    }
+    await renderKeys();
   });
+
   $("agents-btn").addEventListener("click", () => api.navigate?.("gateway"));
 
   boot();

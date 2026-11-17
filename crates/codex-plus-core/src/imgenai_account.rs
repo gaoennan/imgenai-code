@@ -9,6 +9,7 @@
 //! - 可以同时保存多个账号，同一时间只有一个「当前账号」：页面用它的密钥填拓展配置 `apiKey`，
 //!   供应商池里的 imgenai 就跟着用这个账号。切换账号不用重新输密码。
 //! - 每个账号记住自己选的中转密钥（网站上的任意一把）；没选过时用名为「桌面客户端」的那把，没有就新建。
+//!   密钥也能在客户端里新建、删除（和官网「API 中转」页同一套接口），正在用的那把不让删。
 //! - 每个方法都返回 `{ ok: true, ... }` 或 `{ ok: false, code, status, message }`，页面按 code 决定下一步。
 //! - 网络请求和客户端其它外部请求一样走系统代理 / 代理环境变量。
 
@@ -27,6 +28,8 @@ const MAX_JSON_BYTES: usize = 2 * 1024 * 1024;
 const MAX_IMAGE_BYTES: usize = 2 * 1024 * 1024;
 /// 支付二维码地址最多跟几次跳转。
 const MAX_IMAGE_REDIRECTS: usize = 3;
+/// 新建密钥时名称的长度上限（字符数）。
+const MAX_KEY_NAME_CHARS: usize = 30;
 
 /// 页面能看懂的错误：`code` 决定下一步（例如 SESSION_EXPIRED 回到登录），`message` 直接显示。
 #[derive(Debug)]
@@ -67,6 +70,8 @@ pub async fn call(config: &Value, data_dir: &Path, method: &str, params: &Value)
         "ensureKey" => account.ensure_key().await,
         "keys" => account.keys().await,
         "selectKey" => account.select_key(params).await,
+        "createKey" => account.create_key(params).await,
+        "deleteKey" => account.delete_key(params).await,
         "freeTrial" => account.post_message("/api/relay/free-trial", "已开通免费试用").await,
         "useResetCard" => account.post_message("/api/relay/reset-card/use", "已使用重置卡").await,
         "createOrder" => account.create_order(params).await,
@@ -401,6 +406,48 @@ impl Account {
         }
         self.set_preferred_key(Some(&id))?;
         Ok(key_result(token))
+    }
+
+    /// 在网站上新建一把密钥，返回它的 id 和名称（不改用它，页面再让用户选）。
+    async fn create_key(&self, params: &Value) -> ApiResult<Value> {
+        let name = params.get("name").and_then(text_value).unwrap_or_default().trim().to_string();
+        if name.is_empty() {
+            return Err(ApiError::code("请填写密钥名称", "INVALID_INPUT"));
+        }
+        if name.chars().count() > MAX_KEY_NAME_CHARS {
+            return Err(ApiError::code(format!("密钥名称最多 {MAX_KEY_NAME_CHARS} 个字"), "INVALID_INPUT"));
+        }
+        let before: Vec<String> = self.list_tokens().await?.iter().filter_map(token_id).collect();
+        self.api(reqwest::Method::POST, "/api/relay/tokens", Some(json!({ "name": name })), true).await?;
+        // 网站新建后只回 success，新密钥的 id 从前后两次列表的差里找。
+        let after = self.list_tokens().await?;
+        let id = after
+            .iter()
+            .filter(|token| token.get("name").and_then(Value::as_str) == Some(name.as_str()))
+            .filter_map(token_id)
+            .rfind(|id| !before.contains(id));
+        Ok(json!({ "id": id, "name": name }))
+    }
+
+    /// 在网站上删除一把密钥。正在用的那把不让删（删了客户端立刻用不了）；删的是这个账号选过的那把时改回默认。
+    async fn delete_key(&self, params: &Value) -> ApiResult<Value> {
+        let id = params.get("id").and_then(text_value).unwrap_or_default().trim().to_string();
+        let valid = (1..=40).contains(&id.len()) && id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-');
+        if !valid {
+            return Err(ApiError::code("密钥编号不合法", "INVALID_INPUT"));
+        }
+        let tokens = self.list_tokens().await?;
+        let Some(token) = tokens.iter().find(|token| token_id(token).as_deref() == Some(id.as_str())) else {
+            return Err(ApiError::code("这把密钥在网站上已经删除了", "KEY_NOT_FOUND"));
+        };
+        if usable_key(token).is_some_and(|key| !self.current_key.is_empty() && key == self.current_key) {
+            return Err(ApiError::code("这把密钥正在使用，先改用别的密钥再删除", "KEY_IN_USE"));
+        }
+        self.api(reqwest::Method::DELETE, &format!("/api/relay/tokens/{id}"), None, true).await?;
+        if self.preferred_key().as_deref() == Some(id.as_str()) {
+            self.set_preferred_key(None)?;
+        }
+        Ok(json!({ "id": id }))
     }
 
     async fn post_message(&self, path: &str, fallback: &str) -> ApiResult<Value> {

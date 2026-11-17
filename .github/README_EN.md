@@ -19,7 +19,7 @@ imgenai Code is the desktop client for [imgenai](https://imgenai.net), built on 
 
 | Feature | Details |
 | --- | --- |
-| **Sign in and go** | Sign in with your imgenai.net phone number; a dedicated "desktop client" key is created and written into the provider pool, or pick any key you already created on the website |
+| **Sign in and go** | Sign in with your imgenai.net phone number; a dedicated "desktop client" key is created and written into the provider pool, or create, delete and switch between your keys right in the app |
 | **Multiple accounts** | Stay signed in to several imgenai accounts and switch between them in one click, without typing the password again |
 | **Quota and top-ups** | See your plan, today's usage and remaining quota; pay for plans and boost packs by QR code; use reset cards or start a free trial |
 | **Matching usage** | The Usage page prices requests with imgenai's rates, so it matches what the website charges |

@@ -489,14 +489,14 @@ fn schedules_are_validated() {
 async fn imgenai_account_backend_runs_under_the_real_host() {
     use codex_plus_core::bundled_extensions::{IMGENAI_ACCOUNT_KEY, materialize};
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     // 模拟网站：登录给令牌（密码 wrong 时按网站习惯回 200 + success:false），带令牌查订阅、密钥、下单给数据，其余 401。
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let site = format!("http://{}", listener.local_addr().unwrap());
     let site_for_server = site.clone();
-    let key_created = Arc::new(AtomicBool::new(false));
-    let created = key_created.clone();
+    // 第一个账号的密钥列表：None 表示还没新建「桌面客户端」（列表里只有一把打码的），Some 是新建之后的完整列表。
+    let first_tokens: Arc<std::sync::Mutex<Option<Vec<serde_json::Value>>>> = Arc::new(std::sync::Mutex::new(None));
+    let created = first_tokens.clone();
     let server = tokio::spawn(async move {
         let site = site_for_server;
         loop {
@@ -538,30 +538,57 @@ async fn imgenai_account_backend_runs_under_the_real_host() {
             let second = request.contains("Bearer t-2");
             let authed = first || second;
             let order = format!(r#"{{"success":true,"data":{{"tradeOrderId":"o-1","paymentUrl":"{site}/pay/page","qrcodeUrl":"{site}/pay/qrcode"}}}}"#);
-            let body = if request.starts_with("POST /api/payment/create") && authed {
-                order.as_str()
+            let request_name = request
+                .split("\r\n\r\n")
+                .nth(1)
+                .and_then(|body| serde_json::from_str::<serde_json::Value>(body).ok())
+                .and_then(|body| body.get("name").and_then(|name| name.as_str()).map(str::to_string))
+                .unwrap_or_default();
+            let ok = || r#"{"success":true}"#.to_string();
+            let refused = |message: &str| json!({ "success": false, "message": message }).to_string();
+            let body: String = if request.starts_with("POST /api/payment/create") && authed {
+                order.clone()
             } else if request.starts_with("POST /api/auth/login") && request.contains(r#""password":"wrong""#) {
-                r#"{"success":false,"code":"BAD_PASSWORD","message":"手机号或密码错误"}"#
+                r#"{"success":false,"code":"BAD_PASSWORD","message":"手机号或密码错误"}"#.to_string()
             } else if request.starts_with("POST /api/auth/login") && request.contains("13900000000") {
-                r#"{"success":true,"token":"t-2","user":{"id":2,"phone":"13900000000","nickname":"二号"}}"#
+                r#"{"success":true,"token":"t-2","user":{"id":2,"phone":"13900000000","nickname":"二号"}}"#.to_string()
             } else if request.starts_with("POST /api/auth/login") {
-                r#"{"success":true,"token":"t-1","user":{"id":1,"phone":"13800000000","email":"不该落盘"}}"#
+                r#"{"success":true,"token":"t-1","user":{"id":1,"phone":"13800000000","email":"不该落盘"}}"#.to_string()
             } else if request.starts_with("GET /api/relay/subscription") && authed {
-                r#"{"success":true,"data":{"active":true,"tier":"paid","daily_cap_usd":35}}"#
+                r#"{"success":true,"data":{"active":true,"tier":"paid","daily_cap_usd":35}}"#.to_string()
             } else if request.starts_with("GET /api/relay/tokens") && second {
-                r#"{"success":true,"data":[{"id":9,"name":"桌面客户端","key":"sk-secondaccountkey99"}]}"#
+                r#"{"success":true,"data":[{"id":9,"name":"桌面客户端","key":"sk-secondaccountkey99"}]}"#.to_string()
             } else if request.starts_with("GET /api/relay/tokens") && first {
                 // 新建之前只有一把打码的同名密钥（不能用），新建之后列表换成 items 包装的完整密钥，另有一把别的密钥和一把打码的。
-                if created.load(Ordering::SeqCst) {
-                    r#"{"success":true,"data":{"items":[{"id":2,"name":"桌面客户端","key":"realkey"},{"id":3,"name":"我的脚本","key":"sk-scriptkey123456"},{"id":4,"name":"打码","key":"sk-ab**cd"}]}}"#
-                } else {
-                    r#"{"success":true,"data":[{"id":1,"name":"桌面客户端","key":"sk-ab**cd"}]}"#
+                match created.lock().unwrap().as_ref() {
+                    Some(list) => json!({ "success": true, "data": { "items": list } }).to_string(),
+                    None => r#"{"success":true,"data":[{"id":1,"name":"桌面客户端","key":"sk-ab**cd"}]}"#.to_string(),
                 }
-            } else if request.starts_with("POST /api/relay/tokens") && first && request.contains("桌面客户端") {
-                created.store(true, Ordering::SeqCst);
-                r#"{"success":true}"#
+            } else if request.starts_with("POST /api/relay/tokens") && first {
+                let mut guard = created.lock().unwrap();
+                if let Some(list) = guard.as_mut() {
+                    let id = list.iter().filter_map(|token| token["id"].as_u64()).max().unwrap_or(0) + 1;
+                    list.push(json!({ "id": id, "name": request_name, "key": format!("sk-createdkey{id}abcdef") }));
+                    ok()
+                } else if request_name == "桌面客户端" {
+                    *guard = Some(vec![
+                        json!({ "id": 2, "name": "桌面客户端", "key": "realkey" }),
+                        json!({ "id": 3, "name": "我的脚本", "key": "sk-scriptkey123456" }),
+                        json!({ "id": 4, "name": "打码", "key": "sk-ab**cd" }),
+                    ]);
+                    ok()
+                } else {
+                    refused("unexpected")
+                }
+            } else if request.starts_with("DELETE /api/relay/tokens/") && first {
+                let id = request["DELETE /api/relay/tokens/".len()..].split_whitespace().next().and_then(|id| id.parse::<u64>().ok());
+                let mut guard = created.lock().unwrap();
+                let list = guard.get_or_insert_with(Vec::new);
+                let before = list.len();
+                list.retain(|token| token["id"].as_u64() != id);
+                if list.len() < before { ok() } else { refused("令牌不存在") }
             } else {
-                ""
+                String::new()
             };
             let status = if body.is_empty() { "401 Unauthorized" } else { "200 OK" };
             let response = format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
@@ -661,6 +688,26 @@ async fn imgenai_account_backend_runs_under_the_real_host() {
         // 改回默认密钥。
         let back = run("selectKey", json!({ "id": "" })).await.unwrap();
         assert_eq!(back["id"], "2", "{back}");
+
+        // 新建密钥：名称必填、最多 30 个字；新建后从前后两次列表的差里找到新密钥的 id，不改用它。
+        assert_eq!(run("createKey", json!({ "name": "  " })).await.unwrap()["code"], "INVALID_INPUT");
+        assert_eq!(run("createKey", json!({ "name": "长".repeat(31) })).await.unwrap()["code"], "INVALID_INPUT");
+        let made = run("createKey", json!({ "name": " 新密钥 " })).await.unwrap();
+        assert_eq!(made, json!({ "ok": true, "id": "5", "name": "新密钥" }));
+        let keys = run("keys", json!(null)).await.unwrap();
+        let listed = keys["keys"].as_array().and_then(|list| list.iter().find(|key| key["id"] == "5")).cloned();
+        assert_eq!(listed.as_ref().map(|key| key["masked"].clone()), Some(json!("sk-cre…cdef")), "{keys}");
+        assert_eq!(run("ensureKey", json!(null)).await.unwrap()["id"], "2", "新建的密钥不自动改用");
+
+        // 删除密钥：正在用的不让删；删掉选过的那把时改回默认；删过的再删说已经没了。
+        run("selectKey", json!({ "id": "5" })).await.unwrap();
+        let in_use = run("deleteKey", json!({ "id": "2" })).await.unwrap();
+        assert_eq!(in_use["code"], "KEY_IN_USE", "{in_use}");
+        assert_eq!(run("deleteKey", json!({ "id": "../x" })).await.unwrap()["code"], "INVALID_INPUT");
+        let deleted = run("deleteKey", json!({ "id": "5" })).await.unwrap();
+        assert_eq!(deleted, json!({ "ok": true, "id": "5" }));
+        assert_eq!(run("ensureKey", json!(null)).await.unwrap()["id"], "2", "删掉选过的密钥后回到默认密钥");
+        assert_eq!(run("deleteKey", json!({ "id": "5" })).await.unwrap()["code"], "KEY_NOT_FOUND");
 
         // 下单：二维码地址 302 之后才是图片，后台跟过去转成 data URL（面板页不放行外部图片）。
         let order = run("createOrder", json!({ "kind": "subscription", "plan": "paid" })).await.unwrap();

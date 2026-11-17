@@ -107,6 +107,11 @@
   .qr img { width: 200px; height: 200px; background: #fff; padding: 8px; border-radius: 8px; border: 1px solid var(--border); }
   .hidden { display: none !important; }
   .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; }
+  .key-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border); }
+  .key-row:first-child { border-top: none; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+  button.danger { color: var(--danger); }
+  button.danger.armed { background: var(--danger); border-color: var(--danger); color: #fff; }
   .kv span:nth-child(odd) { color: var(--muted); }
 </style>
 </head>
@@ -203,16 +208,19 @@
       <h3>客户端接入</h3>
       <div class="row spread">
         <div class="grow">
-          <div class="row hidden" id="key-select-row" style="margin-bottom: 6px">
-            <span class="muted">使用的密钥</span>
-            <select id="key-select"></select>
-          </div>
           <div id="key-status">—</div>
           <div class="muted" id="key-hint"></div>
         </div>
         <div class="row">
           <button id="agents-btn">去选模型</button>
         </div>
+      </div>
+      <div class="hidden" id="key-manage" style="margin-top: 12px">
+        <div id="key-list"></div>
+        <form class="row" id="key-create-form" style="margin-top: 10px">
+          <input class="grow" id="key-name" maxlength="30" placeholder="新密钥名称，例如：我的脚本">
+          <button type="submit" id="key-create-btn">新建密钥</button>
+        </form>
       </div>
     </div>
 
@@ -630,50 +638,131 @@
     }
   }
 
-  // 列出这个账号在网站上的密钥（只有打码后的样子），标出正在用的那把。
+  // 列出这个账号在网站上的密钥（只有打码后的样子），每把可以改用或删除；正在用的那把不能删。
   async function renderKeys() {
     const key = await currentKey();
     const active = !!state.sub?.active;
     const result = await call("keys");
-    const select = $("key-select");
-    select.textContent = "";
     const keys = result.ok && Array.isArray(result.keys) ? result.keys : [];
-    const usable = keys.filter((item) => item.usable);
-    const showSelect = result.ok && (usable.length > 0 || (active && !result.hasDefaultKey));
-    $("key-select-row").classList.toggle("hidden", !showSelect);
     const current = keys.find((item) => item.current);
-    if (showSelect) {
-      if (!current) {
-        const placeholder = document.createElement("option");
-        placeholder.value = "__none__";
-        placeholder.disabled = true;
-        placeholder.selected = true;
-        placeholder.textContent = key ? "正在用的密钥不属于这个账号，请选一把" : "选择要用的密钥";
-        select.append(placeholder);
+    $("key-manage").classList.toggle("hidden", !result.ok || (!active && keys.length === 0));
+    const list = $("key-list");
+    list.textContent = "";
+    if (result.ok && keys.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "muted";
+      empty.textContent = "这个账号还没有密钥，可以在下面新建。";
+      list.append(empty);
+    }
+    for (const item of keys) {
+      const row = document.createElement("div");
+      row.className = "key-row";
+      const info = document.createElement("div");
+      info.className = "grow";
+      const name = document.createElement("div");
+      name.textContent = item.name || "未命名";
+      const detail = document.createElement("div");
+      detail.className = item.usable ? "muted mono" : "muted";
+      detail.textContent = item.usable ? item.masked : "网站没给出完整密钥，客户端用不了";
+      info.append(name, detail);
+      row.append(info);
+      if (item.current) {
+        const badge = document.createElement("span");
+        badge.className = "badge";
+        badge.textContent = "正在使用";
+        row.append(badge);
+      } else {
+        if (item.usable) {
+          const use = document.createElement("button");
+          use.type = "button";
+          use.textContent = "改用";
+          use.addEventListener("click", () => useKey(item, use));
+          row.append(use);
+        }
+        row.append(deleteButton(item));
       }
-      for (const item of keys) {
-        const option = document.createElement("option");
-        option.value = item.id;
-        option.disabled = !item.usable;
-        option.selected = !!item.current;
-        option.textContent = item.usable ? `${item.name || "未命名"} · ${item.masked}` : `${item.name || "未命名"}（网站没给完整密钥，不能用）`;
-        select.append(option);
-      }
-      if (active && !result.hasDefaultKey) {
-        const option = document.createElement("option");
-        option.value = "";
-        option.textContent = `新建「${result.defaultName || "桌面客户端"}」密钥`;
-        select.append(option);
-      }
+      list.append(row);
     }
     $("key-status").textContent = current
-      ? `正在使用「${current.name || "未命名"}」`
+      ? `正在使用「${current.name || "未命名"}」（${current.masked}）`
       : key ? `已配置（${key.slice(0, 6)}…${key.slice(-4)}）` : "未配置";
     $("key-hint").textContent = key
-      ? "已自动加入供应商池。接入 Codex 后选 imgenai 开头的模型即可；网站上新建的密钥也可以在这里切换使用。"
-      : active ? "在上面选一把密钥，或新建客户端专用密钥。" : "开通订阅或领取试用后会自动配置。";
+      ? "已自动加入供应商池。接入 Codex 后选 imgenai 开头的模型即可；网站上新建的密钥也可以在这里改用。"
+      : active ? "在下面改用一把密钥，或新建一把。" : "开通订阅或领取试用后会自动配置。";
     if (!result.ok && result.code === "SESSION_EXPIRED") await showLogin({ message: result.message, phone: state.user?.phone || "" });
   }
+
+  async function useKey(item, button) {
+    button.disabled = true;
+    const result = await call("selectKey", { id: item.id });
+    button.disabled = false;
+    if (!result.ok) {
+      api.toast?.(result.message || "改用密钥失败");
+    } else if (await setApiKey(result.key)) {
+      api.toast?.(`已改用密钥「${result.name || "未命名"}」`);
+    }
+    await renderKeys();
+  }
+
+  // 删除要点两次：面板在沙箱 iframe 里弹不出确认框，第一次点变成「确认删除」，5 秒内再点才删。
+  function deleteButton(item) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "danger";
+    button.textContent = "删除";
+    let armed = null;
+    button.addEventListener("click", async () => {
+      if (!armed) {
+        button.textContent = "确认删除？用这把密钥的程序会立即失效";
+        button.classList.add("armed");
+        armed = setTimeout(() => {
+          armed = null;
+          button.textContent = "删除";
+          button.classList.remove("armed");
+        }, 5000);
+        return;
+      }
+      clearTimeout(armed);
+      armed = null;
+      button.disabled = true;
+      const result = await call("deleteKey", { id: item.id });
+      if (result.ok) {
+        api.toast?.(`已删除密钥「${item.name || "未命名"}」`);
+      } else {
+        api.toast?.(result.message || "删除密钥失败");
+      }
+      await renderKeys();
+    });
+    return button;
+  }
+
+  $("key-create-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const name = $("key-name").value.trim();
+    if (!name) {
+      api.toast?.("请填写密钥名称");
+      return;
+    }
+    $("key-create-btn").disabled = true;
+    const result = await call("createKey", { name });
+    $("key-create-btn").disabled = false;
+    if (!result.ok) {
+      api.toast?.(result.message || "新建密钥失败");
+      return;
+    }
+    $("key-name").value = "";
+    // 还没配密钥时直接用新建的这把；已经在用别的密钥就不动，点「改用」再切。
+    if (!(await currentKey()) && result.id) {
+      const chosen = await call("selectKey", { id: result.id });
+      if (chosen.ok && (await setApiKey(chosen.key))) {
+        api.toast?.(`已新建并改用密钥「${result.name}」`);
+        await renderKeys();
+        return;
+      }
+    }
+    api.toast?.(`已新建密钥「${result.name}」，点「改用」就能切过去`);
+    await renderKeys();
+  });
 
   // 给当前账号配上它的密钥（选过的那把，没选过就用客户端专用密钥）。
   // clearOnFail：换了账号而新账号拿不到密钥（没订阅）时清空，别继续用上一个账号的密钥。
@@ -694,19 +783,6 @@
     await renderKeys();
     return true;
   }
-
-  $("key-select").addEventListener("change", async (event) => {
-    const select = event.target;
-    select.disabled = true;
-    const result = await call("selectKey", { id: select.value });
-    select.disabled = false;
-    if (!result.ok) {
-      api.toast?.(result.message || "切换密钥失败");
-    } else if (await setApiKey(result.key)) {
-      api.toast?.(`已改用密钥「${result.name || "未命名"}」`);
-    }
-    await renderKeys();
-  });
 
   $("agents-btn").addEventListener("click", () => api.navigate?.("gateway"));
 

@@ -13,6 +13,7 @@ mod extension_curation_commands;
 mod extension_publish_commands;
 mod gateway_commands;
 mod global_dictation;
+mod imgenai;
 pub mod install;
 mod lightweight;
 mod provider_lookup_commands;
@@ -306,6 +307,9 @@ pub fn run() {
     let app_result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
+            // imgenai 分发版：上次退出时 Codex 切成了直连 imgenai 的话，先改回网关，
+            // 再走下面的网关接入、自动接管、启动 Codex。
+            imgenai::switch_codex_back_on_startup();
             let url = if show_update {
                 "/index.html?showUpdate=1"
             } else {
@@ -321,6 +325,8 @@ pub fn run() {
                 codex_plus_core::extension_hooks::sync_default(&commands::default_user_script_manager());
                 // 拓展写进供应商池的供应商（如 imgenai 账户登录后的 imgenai）：按当前登录状态补上或移除。
                 gateway_commands::sync_extension_pool();
+                // imgenai 分发版：首次启动默认开机启动并隐藏到托盘（网关在客户端里，客户端常驻 Codex 才连得上）。
+                imgenai::apply_first_run_defaults();
             });
             codex_plus_core::settings::set_external_settings_change_listener(
                 gateway_commands::notify_settings_changed,
@@ -722,6 +728,11 @@ pub fn run() {
                         app.exit(0);
                     });
                 }
+            }
+            // imgenai 分发版：macOS 上 ⌘Q、程序坞「退出」、注销关机走系统 terminate，不经过上面
+            // ExitRequested 的收尾；在事件循环最终退出时再做一次「Codex 改直连 imgenai」（做过的不会重复）。
+            if matches!(event, tauri::RunEvent::Exit) {
+                imgenai::switch_codex_direct_on_exit();
             }
             #[cfg(target_os = "macos")]
             match event {

@@ -70,9 +70,9 @@ Windows 安装包暂未做代码签名，点「更多信息」，再点「仍要
 </details>
 
 <details>
-  <summary><strong>退出 imgenai Code 后，Codex 为什么连不上？</strong></summary>
+  <summary><strong>不开 imgenai Code，Codex 还能用吗？</strong></summary>
 
-经网关接入时，Codex 指向本机网关，网关只在 imgenai Code 运行时可用，重新打开客户端就恢复。想在退出后自动用回直连，可以在「设置 → 网关」里打开「退出 imgenai Code 时恢复直连」。
+能。客户端默认开机启动并常驻托盘，关掉窗口也在后台运行。完全退出客户端时，Codex 会自动改为直连 imgenai，下次打开客户端再切回网关；客户端关着的这段时间只能用 imgenai 的模型，用量页等网关功能要等客户端打开后才有。1.0.2 及更早的版本没有这项处理，退出客户端后 Codex 会一直重连，请升级。
 
 </details>
 

@@ -7106,6 +7106,17 @@ pub async fn reload_user_scripts() -> CommandResult<SettingsPayload> {
     let manager = default_user_script_manager();
     // 手动改过拓展文件后热重载：顺带让 Codex 钩子条目与拓展声明一致。
     codex_plus_core::extension_hooks::sync_default(&manager);
+    // Codex 没开调试端口（没在运行，或不是从 Codex++ 启动的）：没有页面可重载，不算失败。
+    // 例如在管理器里登录账户、改拓展配置时 Codex 还没启动，原来会弹「热重载失败：连接被拒绝」。
+    let listening = tauri::async_runtime::spawn_blocking(move || codex_plus_core::watcher::cdp_listening(debug_port))
+        .await
+        .unwrap_or(false);
+    if !listening {
+        return ok(
+            "Codex 没有从 Codex++ 启动，拓展的改动会在下次从 Codex++ 启动 Codex 时生效。",
+            fallback_settings_payload(),
+        );
+    }
     match codex_plus_core::user_scripts::reload_live_scripts(debug_port, &manager).await {
         Ok(user_scripts) => {
             let page_reload = user_scripts["reload_mode"] == "page";

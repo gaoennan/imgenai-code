@@ -3176,6 +3176,9 @@ pub fn restore_for_exit() {
             serde_json::json!({ "message": format!("{error:#}") }),
         );
     }
+    // imgenai 分发版：Codex 还连着本机网关（没开「退出时恢复直连」）就改成直连 imgenai，
+    // 客户端没开时 Codex 照样能用；下次启动时先改回来。
+    crate::imgenai::switch_codex_direct_on_exit();
 }
 
 /// 安装更新前：不管「退出时恢复直连」开没开，都把走网关的 Agent 恢复成直连。

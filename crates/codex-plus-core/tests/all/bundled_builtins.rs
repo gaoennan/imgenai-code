@@ -471,6 +471,100 @@ fn imgenai_provider_is_written_into_the_pool_after_login() {
     assert_eq!(store.load().unwrap().providers.len(), 1);
 }
 
+/// 新模型自动补进池里的 imgenai：旧版客户端建的成员升级后补上新版声明的模型，上游新出的也补；
+/// 只加不删、不改默认模型，用户自己删掉的不再加回来；手动加的供应商不动。
+#[test]
+fn imgenai_pool_member_picks_up_new_models() {
+    use codex_plus_core::gateway::apply::{self, ProviderInput};
+    use codex_plus_core::gateway::extension_pool::{self, Offered, PoolSync};
+    use codex_plus_core::gateway::model_sync;
+    use codex_plus_core::gateway::route::relay_models;
+    use codex_plus_core::gateway::store::GatewayStore;
+
+    let temp = tempfile::tempdir().unwrap();
+    let manager = ready(temp.path());
+    manager.migrate_bundled_builtins(&BackendSettings::default()).unwrap();
+    let store = GatewayStore::at(temp.path().join("gateway.json"));
+    let mut values = Map::new();
+    values.insert("apiKey".into(), json!("sk-one"));
+    manager.update_extension_config(IMGENAI_ACCOUNT_KEY, &values).unwrap();
+    assert!(extension_pool::sync(&store, &manager).unwrap().changed);
+    let member = || store.load().unwrap().providers.into_iter().find(|entry| entry.relay.id == "imgenai").unwrap();
+    let models = || relay_models(&member().relay);
+    let has = |name: &str| models().iter().any(|model| model == name);
+
+    // 新建：声明的模型都在，默认是第一个声明的；再同步不重复写。
+    assert_eq!(models().first().map(String::as_str), Some("gpt-6.2-sol"));
+    assert!(has("gpt-6.2-astra") && has("gpt-6.1-sol"));
+    assert_eq!(extension_pool::sync(&store, &manager).unwrap(), PoolSync::default());
+    assert_eq!(
+        extension_pool::discovering_sources(&manager),
+        vec!["extension-pool:imgenai-account/imgenai".to_string()]
+    );
+
+    // 模拟 1.0.6 建的成员：列表里没有 6.2、没有给过的记录、也没有 6.2 的价格，默认是 6.1-sol。
+    let old: Vec<String> = ["gpt-6.1-sol", "gpt-6-astra", "gpt-6.1-terra", "gpt-image-1"].map(String::from).to_vec();
+    model_sync::set_provider_models(&store, "imgenai", &old, Some("gpt-6.1-sol")).unwrap();
+    store
+        .update(|gateway| {
+            let entry = gateway.providers.iter_mut().find(|entry| entry.relay.id == "imgenai").unwrap();
+            entry.extra.remove("extensionOfferedModels");
+            entry.model_prices.retain(|model, _| !model.starts_with("gpt-6.2"));
+            Ok(())
+        })
+        .unwrap();
+    assert!(!has("gpt-6.2-sol"));
+
+    // 升级后第一次同步：新声明的补到末尾，原有顺序和默认模型不变，价格按声明。
+    assert!(extension_pool::sync(&store, &manager).unwrap().changed);
+    let list = models();
+    assert_eq!(&list[..old.len()], &old[..], "原有的顺序不变、默认模型还是 6.1-sol");
+    assert!(has("gpt-6.2-sol") && has("gpt-6.2-astra"));
+    let astra = &member().model_prices["gpt-6.2-astra"];
+    assert_eq!((astra.input, astra.cached_input, astra.output), (14.0, 0.7, 70.0), "官方 $8/$0.4/$40 ×1.75");
+    assert_eq!(member().model_prices["gpt-6.2-sol"].cached_input, 0.175);
+    assert_eq!(extension_pool::sync(&store, &manager).unwrap(), PoolSync::default());
+
+    // 用户自己删掉 6.2-astra：之后同步不再加回来。
+    let without: Vec<String> = models().into_iter().filter(|model| model != "gpt-6.2-astra").collect();
+    model_sync::set_provider_models(&store, "imgenai", &without, None).unwrap();
+    assert_eq!(extension_pool::sync(&store, &manager).unwrap(), PoolSync::default());
+    assert!(!has("gpt-6.2-astra"));
+
+    // 上游新出的模型：补到末尾；上游检查的其它提示保留，只去掉加进来的那个。
+    store
+        .update(|gateway| {
+            let entry = gateway.providers.iter_mut().find(|entry| entry.relay.id == "imgenai").unwrap();
+            entry.upstream_new = vec!["gpt-6.2-astra".into(), "gpt-6.3-sol".into()];
+            Ok(())
+        })
+        .unwrap();
+    let mut upstream = models();
+    upstream.extend(["gpt-6.2-astra".to_string(), "gpt-6.3-sol".to_string()]);
+    let offered = extension_pool::offer_models(&store, "imgenai", &upstream).unwrap();
+    assert_eq!(offered.added, vec!["gpt-6.3-sol".to_string()], "删掉的 6.2-astra 不加回来");
+    assert_eq!(models().last().map(String::as_str), Some("gpt-6.3-sol"));
+    assert_eq!(member().upstream_new, vec!["gpt-6.2-astra".to_string()]);
+    assert_eq!(extension_pool::offer_models(&store, "imgenai", &upstream).unwrap(), Offered::default());
+
+    // 手动加的供应商不是拓展池成员：不动。
+    let manual = ProviderInput {
+        name: "手动".into(),
+        base_url: "https://relay.example.com/v1".into(),
+        keys: vec!["sk-manual".into()],
+        model: "m1".into(),
+        model_list: "m1".into(),
+        ..ProviderInput::default()
+    };
+    let (_, manual_id) = apply::create_provider(&store, &manual, "custom", None).unwrap();
+    assert_eq!(
+        extension_pool::offer_models(&store, &manual_id, &["m2".to_string()]).unwrap(),
+        Offered::default()
+    );
+    let manual_entry = store.load().unwrap().providers.into_iter().find(|entry| entry.relay.id == manual_id).unwrap();
+    assert_eq!(relay_models(&manual_entry.relay), vec!["m1".to_string()]);
+}
+
 #[test]
 fn imgenai_account_scripts_only_use_public_interfaces() {
     let files = imgenai_account_files();

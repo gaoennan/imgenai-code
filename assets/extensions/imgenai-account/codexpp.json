@@ -32,6 +32,8 @@
       "requiresKey": true,
       "pool": true,
       "models": [
+        "gpt-6.2-sol",
+        "gpt-6.2-astra",
         "gpt-6.1-sol",
         "gpt-6-astra",
         "gpt-6.1-terra",
@@ -44,6 +46,8 @@
       ],
       "discoverModels": true,
       "prices": {
+        "gpt-6.2-astra": { "input": 14, "cachedInput": 0.7, "output": 70 },
+        "gpt-6.2-sol": { "input": 3.5, "cachedInput": 0.175, "output": 17.5 },
         "gpt-6-astra": { "input": 17.5, "cachedInput": 1.75, "output": 87.5 },
         "gpt-6": { "input": 17.5, "cachedInput": 1.75, "output": 87.5 },
         "gpt-6.1-sol": { "input": 3.5, "cachedInput": 0.175, "output": 17.5 },

@@ -1830,6 +1830,61 @@ pub fn start_model_watch() {
     tauri::async_runtime::spawn(codex_plus_core::gateway::quota::watch(
         GatewayStore::default(),
     ));
+    tauri::async_runtime::spawn(watch_extension_pool_models());
+}
+
+/// 拓展池里声明了 `discoverModels` 的成员（如 imgenai）：上游一出新模型就自动加进列表（只加不删，
+/// 用户删掉的不会加回来），不用用户去点「从上游同步」。启动时和之后每小时看一眼，超过 6 小时没检查的拉一次上游。
+async fn watch_extension_pool_models() {
+    const MAX_AGE_MS: u64 = 6 * 60 * 60 * 1000;
+    loop {
+        let sources = codex_plus_core::gateway::extension_pool::discovering_sources(
+            &crate::commands::default_user_script_manager(),
+        );
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_millis() as u64)
+            .unwrap_or(0);
+        let due: Vec<String> = GatewayStore::default()
+            .load()
+            .map(|gateway| {
+                gateway
+                    .providers
+                    .iter()
+                    .filter(|provider| {
+                        provider.enabled
+                            && sources.contains(&provider.source)
+                            && now.saturating_sub(provider.models_checked_at_ms) >= MAX_AGE_MS
+                    })
+                    .map(|provider| provider.relay.id.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        for id in due {
+            offer_upstream_models(id).await;
+        }
+        tokio::time::sleep(Duration::from_secs(60 * 60)).await;
+    }
+}
+
+async fn offer_upstream_models(id: String) {
+    let store = GatewayStore::default();
+    let Ok(diff) = model_sync::check_provider(&store, &id).await else {
+        return;
+    };
+    match codex_plus_core::gateway::extension_pool::offer_models(&store, &id, &diff.upstream) {
+        Ok(offered) if !offered.added.is_empty() => {
+            let _ = refresh_agents(Ok(()));
+            autofill_prices(Some(id));
+        }
+        Ok(_) => {}
+        Err(error) => {
+            let _ = codex_plus_core::diagnostic_log::append_diagnostic_log(
+                "gateway.extension_pool_offer_failed",
+                serde_json::json!({ "id": id, "message": format!("{error:#}") }),
+            );
+        }
+    }
 }
 
 /// 删除网关供应商（直连模式的数据不受影响）。

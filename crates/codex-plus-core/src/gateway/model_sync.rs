@@ -42,7 +42,7 @@ fn model_slug(model: &str) -> String {
 }
 
 /// `list` 里有没有和 `model` 同名的（忽略大小写和窗口后缀）。
-fn has_model(list: &[String], model: &str) -> bool {
+pub(crate) fn has_model(list: &[String], model: &str) -> bool {
     let slug = model_slug(model);
     list.iter()
         .any(|item| model_slug(item).eq_ignore_ascii_case(&slug))
@@ -271,6 +271,22 @@ fn apply_model_changes(
     provider.upstream_new.clear();
     provider.upstream_gone.clear();
     Ok(ModelChanges { added, removed })
+}
+
+/// 只往列表末尾追加 `add` 里还没有的模型，其余同 [`apply_model_changes`]；
+/// 不是用户看过的改动，上游检查的提示只去掉已经加进来的那几个。返回实际加进去的模型。
+pub(crate) fn append_models(
+    provider: &mut crate::gateway::store::GatewayProvider,
+    add: &[String],
+) -> anyhow::Result<Vec<String>> {
+    let (upstream_new, upstream_gone) = (provider.upstream_new.clone(), provider.upstream_gone.clone());
+    let changes = apply_model_changes(provider, &[], add)?;
+    provider.upstream_new = upstream_new
+        .into_iter()
+        .filter(|model| !has_model(&changes.added, model))
+        .collect();
+    provider.upstream_gone = upstream_gone;
+    Ok(changes.added)
 }
 
 /// 应用用户在同步预览里勾选的改动（#2785）：只删 `remove` 里的、只加 `add` 里的，

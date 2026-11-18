@@ -12,6 +12,7 @@ imgenai Code 是在开源项目 [Codex++](https://github.com/BigPizzaV3/CodexPlu
 | 内置拓展包注册、默认启用 | `crates/codex-plus-core/src/bundled_extensions.rs`、`user_scripts.rs` | 几十行 |
 | 拓展供应商 `requiresKey` | `user_scripts.rs` | 没有密钥时不并入网关 |
 | 拓展供应商 `pool` | `crates/codex-plus-core/src/gateway/extension_pool.rs`，调用点在管理器的 `set_extension_config`、拓展开关与启动时 | 登录拿到密钥后把 imgenai 写进供应商池（看得到、能选模型），退出登录时移出 |
+| 池里的 imgenai 自动补新模型 | `extension_pool.rs` 的 `offer_models`，上游检查在管理器 `gateway_commands.rs` 的 `watch_extension_pool_models` | 只加不删：新版 `codexpp.json` 多声明的模型在同步时补上；上游 `/models` 新出的每 6 小时查一次补上。给过的记在供应商的 `extensionOfferedModels`，用户删掉的不再加回。服务端上新型号后仍要在 `codexpp.json` 的 `prices` 补实扣单价并发版，否则用量页按公开价算 |
 | 「添加供应商」目录的 imgenai 入口 | `apps/codex-plus-manager/src/GatewayProviders.tsx` | 点开跳到「imgenai 账户」页；构建时 `rebrand.mjs` 清掉上游赞助商（同行中转站） |
 | 改名为 imgenai Code | `scripts/imgenai/rebrand.mjs` | **只在构建副本上执行**，源码分支保持上游写法 |
 | 仓库首页 | `.github/README.md`、`README_EN.md`、`CONTRIBUTING.md`、`imgenai/hero.svg` | GitHub 优先显示 `.github/` 里的这几份；根目录同名文件保持上游原样，合并时不冲突 |

@@ -21,7 +21,7 @@ imgenai Code is the desktop client for [imgenai](https://imgenai.net), built on 
 | --- | --- |
 | **Sign in and go** | Sign in with your imgenai.net phone number; a dedicated "desktop client" key is created and written into the provider pool, or create, delete and switch between your keys right in the app |
 | **Multiple accounts** | Stay signed in to several imgenai accounts and switch between them in one click, without typing the password again |
-| **Getting started guide** | On first launch, walks you through signing in, subscribing and connecting Codex, highlights what to click, and checks off each step as it's done; reopen it any time from "上手指引" (Getting started) in the sidebar |
+| **Getting started guide** | Opens when the app starts and walks you through signing in, subscribing and connecting Codex, highlights what to click, and checks off each step as it's done (finished steps can be reopened); tick "Don't show on startup" to stop it popping up, and reopen it any time from "上手指引" (Getting started) in the sidebar |
 | **Quota and top-ups** | See your plan, today's usage and remaining quota; pay for plans and boost packs by QR code; use reset cards or start a free trial |
 | **Matching usage** | The Usage page prices requests with imgenai's rates, so it matches what the website charges |
 | **Max and Ultra** | Adds Max and Ultra to Codex's reasoning effort menu |
@@ -31,7 +31,7 @@ imgenai Code is the desktop client for [imgenai](https://imgenai.net), built on 
 
 ## Getting started
 
-The first time you open the app, a getting-started guide walks you through these steps.
+When you open the app, a getting-started guide walks you through these steps.
 
 1. Download from [Releases](https://github.com/gaoennan/imgenai-code/releases): `imgenaiCode-<version>-macos-universal.dmg` for macOS (Apple silicon and Intel) or `imgenaiCode-<version>-windows-x64-setup.exe` for Windows.
 2. Open imgenai Code, go to "imgenai 账户" (imgenai account) under the gateway section, and sign in with your imgenai.net account.

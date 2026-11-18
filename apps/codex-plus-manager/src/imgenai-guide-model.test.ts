@@ -5,7 +5,9 @@ import {
   codexUsesImgenai,
   guideCardVisible,
   guideProgress,
+  guideSequence,
   imgenaiCodexBinding,
+  neighborStep,
   IMGENAI_POOL_SOURCE,
   parseGuideRecord,
   recommendedModel,
@@ -163,4 +165,32 @@ test("一键接入写的绑定和在选择器里点 imgenai 下的模型一样�
   noKey.pool = noKey.pool.filter((entry) => entry.source !== IMGENAI_POOL_SOURCE);
   assert.ok("error" in imgenaiCodexBinding(noKey));
   assert.ok("error" in imgenaiCodexBinding(null));
+});
+
+test("欢迎卡每次打开都弹，只有勾了「以后不再弹出」才不弹", async () => {
+  const { readFileSync } = await import("node:fs");
+  const read = (name: string) => readFileSync(new URL(name, import.meta.url), "utf8");
+  const app = read("./App.tsx");
+  const guide = read("./ImgenaiGuide.tsx");
+  assert.match(app, /useState<"welcome" \| "guide" \| null>\(\(\) => \(readNoAutoOpen\(\) \? null : "welcome"\)\)/);
+  assert.match(guide, /<input checked=\{noAutoOpen\} onChange=\{\(event\) => setNoAutoOpen\(event\.target\.checked\)\} type="checkbox" \/>/);
+  // 「开始」和「以后再说」都按勾选框存；没勾就清掉记录，下次照样弹。
+  assert.match(guide, /const begin = \(\) => \{\n\s*writeNoAutoOpen\(noAutoOpen\);/);
+  assert.match(guide, /const later = \(\) => \{\n\s*writeNoAutoOpen\(noAutoOpen\);\n\s*onClose\(\);/);
+  assert.match(guide, /else window\.localStorage\.removeItem\(NO_AUTO_OPEN_KEY\);/);
+});
+
+test("面板可以前后翻看每一步；配好了才有最后一页「怎么用」", () => {
+  assert.deepEqual(guideSequence(false), ["login", "subscribe", "connect", "launch"]);
+  const all = guideSequence(true);
+  assert.deepEqual(all, ["login", "subscribe", "connect", "launch", "done"]);
+  assert.equal(neighborStep(all, "login", -1), null);
+  assert.equal(neighborStep(all, "login", 1), "subscribe");
+  assert.equal(neighborStep(all, "launch", 1), "done");
+  assert.equal(neighborStep(all, "done", 1), null);
+  assert.equal(neighborStep(all, "done", -1), "launch");
+  // 拦路的步骤不在序列里：往后翻到第一步，往前没有。
+  assert.equal(neighborStep(all, "mode", 1), "login");
+  assert.equal(neighborStep(all, "install", -1), null);
+  assert.equal(neighborStep(guideSequence(false), "launch", 1), null);
 });

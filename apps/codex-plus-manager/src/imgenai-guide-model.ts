@@ -32,6 +32,18 @@ export type GuideFacts = {
   codexRunning: boolean;
 };
 
+/** 指引面板里可以前后翻看的页：四步，配好了再加最后一页「怎么用」。 */
+export function guideSequence(setupDone: boolean): GuideStepId[] {
+  return setupDone ? [...MAIN_STEPS, "done"] : [...MAIN_STEPS];
+}
+
+/** 前后翻页：`delta` 为 -1 / 1；不在序列里（如拦路的 mode / install）时，往后翻到第一页。到头返回 null。 */
+export function neighborStep(sequence: GuideStepId[], from: GuideStepId, delta: -1 | 1): GuideStepId | null {
+  const index = sequence.indexOf(from);
+  if (index < 0) return delta > 0 ? sequence[0] ?? null : null;
+  return sequence[index + delta] ?? null;
+}
+
 export type GuideProgress = {
   current: GuideStepId;
   /** 还有状态没读到：先不下结论，不自动弹出。 */

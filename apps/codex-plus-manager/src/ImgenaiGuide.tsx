@@ -1,8 +1,8 @@
 /**
  * imgenai 上手指引（imgenai Code 分发版）：替代上游教人「添加供应商」的入门清单与界面导览。
  *
- * - 欢迎卡：每台电脑第一次打开时弹一次（没配好的带着从头做，配好的告诉他怎么用）；
- *   侧栏「上手指引」和「设置 → 通用」随时能再打开。
+ * - 欢迎卡：每次打开客户端都弹（没配好的带着从头做，配好的告诉他怎么用），
+ *   勾上「以后不再弹出」才不再自动弹；侧栏「上手指引」和「设置 → 通用」随时能再打开。
  * - 侧栏进度卡 `ImgenaiGuideCard`：还没配好时一直在，写着下一步，点「继续」打开指引面板。
  * - 指引面板 `ImgenaiGuidePanel`：停在右下角，当前这一步要点的按钮在界面上圈出来；
  *   每一步按真实状态自动打勾、往下走（见 imgenai-guide-model.ts）。
@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowRight, Check, ChevronDown, ChevronUp, Loader2, Play, RotateCcw, Sparkles, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronUp, Loader2, Play, RotateCcw, Sparkles, X } from "lucide-react";
 import { getLanguage } from "./i18n";
 import type { AgentFocus } from "./agent-focus-model";
 import { useGatewayPayload } from "./HubOverview";
@@ -23,21 +23,25 @@ import {
   GUIDE_STORAGE_KEY,
   guideCardVisible,
   guideProgress,
+  guideSequence,
   IMGENAI_ACCOUNT_KEY,
   imgenaiCodexBinding,
   imgenaiEntry,
   MAIN_STEPS,
+  neighborStep,
   parseGuideRecord,
   recommendedModel,
   serializeGuideRecord,
   type GuideProgress,
   type GuideRecord,
   type GuideStepId,
+  type MainStep,
 } from "./imgenai-guide-model";
 import "./ImgenaiGuide.css";
 
 const L = (zh: string, en: string) => (getLanguage() === "en" ? en : zh);
-const WELCOMED_KEY = "imgenai.guide.welcomed";
+/** 欢迎卡上勾了「以后不再弹出」。没勾时每次打开客户端都弹。 */
+const NO_AUTO_OPEN_KEY = "imgenai.guide.noAutoOpen";
 const CODEX_SITE = "https://chatgpt.com/codex";
 
 export function readGuideRecord(): GuideRecord | null {
@@ -51,13 +55,16 @@ export function writeGuideRecord(state: GuideRecord) {
 /** 侧栏入口等处的名字。 */
 export const guideLabel = () => L("上手指引", "Getting started");
 
-/** 这台电脑上看过欢迎卡没有（点过「开始」或「以后再说」才算）。 */
-export function readWelcomed(): boolean {
-  try { return window.localStorage.getItem(WELCOMED_KEY) === "1"; } catch { return true; }
+/** 打开客户端时要不要自动弹欢迎卡：用户在欢迎卡上勾了「以后不再弹出」就不弹。读不到存储时按要弹处理。 */
+export function readNoAutoOpen(): boolean {
+  try { return window.localStorage.getItem(NO_AUTO_OPEN_KEY) === "1"; } catch { return false; }
 }
 
-export function markWelcomed() {
-  try { window.localStorage.setItem(WELCOMED_KEY, "1"); } catch { /* 同上 */ }
+function writeNoAutoOpen(off: boolean) {
+  try {
+    if (off) window.localStorage.setItem(NO_AUTO_OPEN_KEY, "1");
+    else window.localStorage.removeItem(NO_AUTO_OPEN_KEY);
+  } catch { /* 同上 */ }
 }
 
 type AccountState = { ok?: boolean; loggedIn?: boolean };
@@ -229,7 +236,12 @@ export function ImgenaiGuidePanel({ env, location, actions, welcome, onStart, on
   const [collapsed, setCollapsed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [manualConnect, setManualConnect] = useState(false);
+  // 欢迎卡上的「以后不再弹出」：关掉或开始时才存，手动重新打开时显示当前设置，取消勾选就恢复每次弹出。
+  const [noAutoOpen, setNoAutoOpen] = useState(readNoAutoOpen);
+  // 用户点开或翻到的那一页；null 时跟着当前该做的一步走（做完自动往下）。
+  const [viewing, setViewing] = useState<GuideStepId | null>(null);
   const step = progress.current;
+  const shown = viewing ?? step;
   const onAccount = location.route === "extension" && location.extensionKey === IMGENAI_ACCOUNT_KEY;
   const onGateway = location.route === "gateway";
   const entry = imgenaiEntry(payload);
@@ -244,6 +256,12 @@ export function ImgenaiGuidePanel({ env, location, actions, welcome, onStart, on
       setManualConnect(false);
     }
   }, [step]);
+  // 翻到某一页；翻到当前该做的那一步时恢复「跟着走」。
+  const go = (id: GuideStepId) => {
+    setViewing(id === step ? null : id);
+    setManualConnect(false);
+    setCollapsed(false);
+  };
 
   const connect = useCallback(async () => {
     if (busy || !payload) return;
@@ -354,10 +372,46 @@ export function ImgenaiGuidePanel({ env, location, actions, welcome, onStart, on
     }),
   };
 
-  // 欢迎卡点「开始」：当前这一步在账户页做的，顺手打开账户页。
+  // 已经做完的步骤：回看时讲清在哪做、以后在哪改，照样圈出位置。
+  const accountTarget = onAccount ? null : `[data-extension-page="${IMGENAI_ACCOUNT_KEY}"]`;
+  const goAccount = onAccount ? null : <button className="imgenai-guide-ghost" onClick={actions.openAccount} type="button">{L("带我去", "Take me there")}<ArrowRight aria-hidden="true" size={13} /></button>;
+  const doneViews: Record<MainStep, () => StepView> = {
+    login: () => ({
+      body: L("这一步已完成。登录、添加或切换账号都在左侧圈出来的「imgenai 账户」里，用 imgenai.net 的手机号和密码登录。",
+        "Done. Sign in, add or switch accounts on \"imgenai 账户\" (highlighted on the left) with your imgenai.net phone number and password."),
+      target: accountTarget,
+      actions: goAccount,
+    }),
+    subscribe: () => ({
+      body: L("这一步已完成。订阅档位、今日额度、加油包、重置卡和免费试用都在「imgenai 账户」页。",
+        "Done. Plans, today's quota, boost packs, reset cards and the free trial are all on the imgenai account page."),
+      target: accountTarget,
+      actions: goAccount,
+    }),
+    connect: () => ({
+      body: L("这一步已完成。想换 Codex 的默认模型，到「Codex 接入」点 Codex 这一行圈出来的「默认模型」按钮，选 imgenai 下的模型。",
+        "Done. To change Codex's default model, open Codex setup and click the highlighted default model button on the Codex row, then pick a model under imgenai."),
+      target: onGateway ? '[data-agent-row="codex"] .gw-picker-button' : '[data-nav="gateway"]',
+      actions: onGateway ? null : <button className="imgenai-guide-ghost" onClick={actions.openGateway} type="button">{L("带我去", "Take me there")}<ArrowRight aria-hidden="true" size={13} /></button>,
+    }),
+    launch: () => ({
+      body: L("这一步已完成，Codex 正在运行。以后用左侧 Codex 那一行圈出来的按钮启动或停止 Codex。",
+        "Done, Codex is running. Use the highlighted button on the Codex row at the left to start or stop Codex."),
+      target: '[data-guide="codex-run"]',
+      actions: null,
+    }),
+  };
+
+  // 欢迎卡点「开始」：当前这一步在账户页做的，顺手打开账户页。已经配好的从第一步看起。
   const begin = () => {
-    if ((step === "login" || step === "subscribe") && !onAccount) actions.openAccount();
+    writeNoAutoOpen(noAutoOpen);
+    if (progress.setupDone) setViewing("login");
+    else if ((step === "login" || step === "subscribe") && !onAccount) actions.openAccount();
     onStart();
+  };
+  const later = () => {
+    writeNoAutoOpen(noAutoOpen);
+    onClose();
   };
 
   if (welcome) {
@@ -369,8 +423,8 @@ export function ImgenaiGuidePanel({ env, location, actions, welcome, onStart, on
         <div aria-labelledby="imgenai-guide-welcome-title" aria-modal="true" className="imgenai-guide-welcome" role="dialog">
           <h3 id="imgenai-guide-welcome-title">{L("欢迎使用 imgenai Code", "Welcome to imgenai Code")}</h3>
           <p>{ready
-            ? L("这台电脑已经登录 imgenai、接好了 Codex，打开 Codex 新建对话就能用。点「看看怎么用」，了解在哪换模型、在哪看额度和用量。",
-              "This computer is signed in to imgenai and Codex is connected; start a new chat in Codex to use it. Click How to use it to see where to switch models and check quota and usage.")
+            ? L("这台电脑已经登录 imgenai、接好了 Codex，打开 Codex 新建对话就能用。点「看看怎么用」从第一步看起：在哪登录和开通、怎么接入和启动 Codex、在哪换模型和看额度。",
+              "This computer is signed in to imgenai and Codex is connected; start a new chat in Codex to use it. Click How to use it to go through each step: where to sign in and subscribe, how Codex is connected and launched, and where to switch models and check quota.")
             : L("跟着下面几步，几分钟就能在 Codex 里用上 imgenai 的模型。每一步做完会自动打勾。", "Follow these steps to start using imgenai models in Codex. Each step checks itself off when it's done.")}</p>
           <ol className="imgenai-guide-steps">
             {MAIN_STEPS.map((id, index) => (
@@ -381,7 +435,11 @@ export function ImgenaiGuidePanel({ env, location, actions, welcome, onStart, on
             ))}
           </ol>
           <div className="imgenai-guide-actions">
-            <button className="imgenai-guide-ghost" onClick={onClose} type="button">{L("以后再说", "Later")}</button>
+            <label className="imgenai-guide-optout">
+              <input checked={noAutoOpen} onChange={(event) => setNoAutoOpen(event.target.checked)} type="checkbox" />
+              {L("以后不再弹出", "Don't show on startup")}
+            </label>
+            <button className="imgenai-guide-ghost" onClick={later} type="button">{L("以后再说", "Later")}</button>
             <button autoFocus className="imgenai-guide-primary" onClick={begin} type="button">{ready ? L("看看怎么用", "How to use it") : L("开始", "Start")}<ArrowRight aria-hidden="true" size={13} /></button>
           </div>
         </div>
@@ -390,14 +448,18 @@ export function ImgenaiGuidePanel({ env, location, actions, welcome, onStart, on
     );
   }
 
-  const view = views[step]();
-  const blocking = step === "mode" || step === "install";
+  const mainShown = (MAIN_STEPS as readonly GuideStepId[]).includes(shown) ? (shown as MainStep) : null;
+  const view = mainShown && progress.done[mainShown] ? doneViews[mainShown]() : views[shown]();
+  const blockingShown = shown === "mode" || shown === "install";
+  const sequence = guideSequence(progress.setupDone);
+  const prev = neighborStep(sequence, shown, -1);
+  const next = neighborStep(sequence, shown, 1);
   return createPortal(
     <>
       {!collapsed && view.target ? <Highlight label={L("点这里", "Click here")} selector={view.target} /> : null}
       <aside aria-label={L("上手指引", "Getting started")} className="imgenai-guide-panel" data-collapsed={collapsed}>
         <header>
-          <strong><Sparkles aria-hidden="true" size={13} />{step === "done" ? L("上手指引 · 完成", "Getting started · done") : L("上手指引", "Getting started")}</strong>
+          <strong><Sparkles aria-hidden="true" size={13} />{progress.current === "done" ? L("上手指引 · 已配好", "Getting started · all set") : L("上手指引", "Getting started")}</strong>
           <span className="imgenai-guide-count">{`${progress.count}/4`}</span>
           <button aria-label={collapsed ? L("展开", "Expand") : L("收起", "Collapse")} className="imgenai-guide-icon" onClick={() => setCollapsed(!collapsed)} type="button">
             {collapsed ? <ChevronUp aria-hidden="true" size={14} /> : <ChevronDown aria-hidden="true" size={14} />}
@@ -407,43 +469,48 @@ export function ImgenaiGuidePanel({ env, location, actions, welcome, onStart, on
           </button>
         </header>
         {collapsed ? (
-          <button className="imgenai-guide-collapsed" onClick={() => setCollapsed(false)} type="button">{STEP_TITLES[step]()}</button>
+          <button className="imgenai-guide-collapsed" onClick={() => setCollapsed(false)} type="button">{STEP_TITLES[shown]()}</button>
         ) : (
           <>
-            {blocking ? (
+            {blockingShown ? (
               <div className="imgenai-guide-current" data-blocking="true">
-                <strong>{STEP_TITLES[step]()}</strong>
+                <strong>{STEP_TITLES[shown]()}</strong>
                 <p>{view.body}</p>
                 {view.actions ? <div className="imgenai-guide-actions">{view.actions}</div> : null}
               </div>
             ) : null}
-            {step === "done" ? (
-              <div className="imgenai-guide-current">
+            {/* 四步都列着，点哪一步看哪一步（做完的也能回看）。 */}
+            <ol className="imgenai-guide-steps">
+              {MAIN_STEPS.map((id, index) => {
+                const done = progress.done[id];
+                const active = id === shown;
+                return (
+                  <li data-active={active} data-done={done} key={id}>
+                    <span className="imgenai-guide-num">{done ? <Check aria-hidden="true" size={12} /> : index + 1}</span>
+                    <div>
+                      <button aria-expanded={active} className="imgenai-guide-step-title" onClick={() => go(id)} type="button">{STEP_TITLES[id]()}</button>
+                      {active ? (
+                        <div className="imgenai-guide-current">
+                          <p>{view.body}</p>
+                          {view.actions ? <div className="imgenai-guide-actions">{view.actions}</div> : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+            {shown === "done" ? (
+              <div className="imgenai-guide-current imgenai-guide-summary">
+                <strong>{L("怎么用", "How to use it")}</strong>
                 <p>{view.body}</p>
                 <div className="imgenai-guide-actions">{view.actions}</div>
               </div>
-            ) : (
-              <ol className="imgenai-guide-steps">
-                {MAIN_STEPS.map((id, index) => {
-                  const done = progress.done[id];
-                  const active = !blocking && id === step;
-                  return (
-                    <li data-active={active} data-done={done} key={id}>
-                      <span className="imgenai-guide-num">{done ? <Check aria-hidden="true" size={12} /> : index + 1}</span>
-                      <div>
-                        <span>{STEP_TITLES[id]()}</span>
-                        {active ? (
-                          <div className="imgenai-guide-current">
-                            <p>{view.body}</p>
-                            {view.actions ? <div className="imgenai-guide-actions">{view.actions}</div> : null}
-                          </div>
-                        ) : null}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ol>
-            )}
+            ) : null}
+            <nav aria-label={L("翻页", "Pages")} className="imgenai-guide-nav">
+              <button className="imgenai-guide-ghost" disabled={!prev} onClick={() => prev && go(prev)} type="button"><ArrowLeft aria-hidden="true" size={13} />{L("上一步", "Back")}</button>
+              <button className="imgenai-guide-ghost" disabled={!next} onClick={() => next && go(next)} type="button">{next === "done" ? L("怎么用", "How to use it") : L("下一步", "Next")}<ArrowRight aria-hidden="true" size={13} /></button>
+            </nav>
           </>
         )}
       </aside>

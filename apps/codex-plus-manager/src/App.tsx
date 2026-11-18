@@ -158,7 +158,7 @@ import { agentTabGroups, agentTarget, pageVisibleForTool } from "./page-groups";
 import { TopbarActions } from "./TopbarActions";
 import { CodexLaunchButton, type CodexLaunchState } from "./CodexLaunchButton";
 import { OnboardingTour } from "./OnboardingTour";
-import { guideLabel, ImgenaiGuideCard, ImgenaiGuidePanel, markWelcomed, readGuideRecord, readWelcomed, writeGuideRecord, type GuideActions } from "./ImgenaiGuide";
+import { guideLabel, ImgenaiGuideCard, ImgenaiGuidePanel, readGuideRecord, readNoAutoOpen, writeGuideRecord, type GuideActions } from "./ImgenaiGuide";
 import { IMGENAI_ACCOUNT_KEY, type GuideRecord } from "./imgenai-guide-model";
 import { SETUP_STORAGE_KEY, serializeSetupState, shouldShowSetup } from "./onboarding-setup-model";
 import { AgentFocusDialog } from "./AgentFocusDialog";
@@ -1790,8 +1790,8 @@ export function App() {
   const [setupOpen, setSetupOpen] = useState(initialSetupOpen);
   // imgenai：上手指引替代上游的入门清单与界面导览（见 ImgenaiGuide.tsx）。
   const [guideRecord, setGuideRecord] = useState(readGuideRecord);
-  // 每台电脑第一次打开时弹一次欢迎卡（点过「开始」或「以后再说」才记下）；侧栏「上手指引」随时再打开。
-  const [guidePanel, setGuidePanel] = useState<"welcome" | "guide" | null>(() => (readWelcomed() ? null : "welcome"));
+  // 每次打开客户端都弹欢迎卡，欢迎卡上勾了「以后不再弹出」才不弹；侧栏「上手指引」随时再打开。
+  const [guidePanel, setGuidePanel] = useState<"welcome" | "guide" | null>(() => (readNoAutoOpen() ? null : "welcome"));
   const recordGuide = useCallback((state: GuideRecord) => {
     writeGuideRecord(state);
     setGuideRecord(state);
@@ -5293,16 +5293,9 @@ export function App() {
           location={{ route, extensionKey: route === "extension" ? extensionPageKey : null }}
           actions={guideActions}
           welcome={guidePanel === "welcome"}
-          onStart={() => {
-            markWelcomed();
-            setGuidePanel("guide");
-          }}
-          onClose={() => {
-            markWelcomed();
-            setGuidePanel(null);
-          }}
+          onStart={() => setGuidePanel("guide")}
+          onClose={() => setGuidePanel(null)}
           onFinish={() => {
-            markWelcomed();
             recordGuide("completed");
             setGuidePanel(null);
           }}

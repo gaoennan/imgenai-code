@@ -179,7 +179,7 @@
   font-weight: 600;
 }
 
-.imgenai-guide-steps li[data-done="true"] > div > span,
+.imgenai-guide-steps li[data-done="true"]:not([data-active="true"]) .imgenai-guide-step-title,
 .imgenai-guide-welcome .imgenai-guide-steps li[data-done="true"] {
   text-decoration: line-through;
   text-decoration-color: hsl(var(--muted-foreground) / 0.5);
@@ -228,6 +228,54 @@
 
 .imgenai-guide-current[data-blocking="true"] strong {
   font-size: 12.5px;
+}
+
+/* 面板里的步骤标题可以点开（做完的也能回看）。 */
+.imgenai-guide-step-title {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.imgenai-guide-step-title:hover {
+  color: hsl(var(--foreground));
+  text-decoration: underline;
+}
+
+.imgenai-guide-step-title:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+.imgenai-guide-summary {
+  margin-top: 6px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: hsl(var(--imgenai-guide) / 0.08);
+}
+
+.imgenai-guide-summary strong {
+  font-size: 12.5px;
+}
+
+.imgenai-guide-nav {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid hsl(var(--border));
+}
+
+.imgenai-guide-nav button {
+  height: 27px;
+  padding: 0 10px;
 }
 
 /* ---- 右下角的指引面板：不挡页面操作 ---- */
@@ -357,8 +405,29 @@
 }
 
 .imgenai-guide-welcome .imgenai-guide-actions {
+  align-items: center;
   justify-content: flex-end;
   margin-top: 16px;
+}
+
+/* 「以后不再弹出」靠左，两个按钮靠右。 */
+.imgenai-guide-optout {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  color: hsl(var(--muted-foreground));
+  font-size: 12.5px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.imgenai-guide-optout input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: hsl(var(--imgenai-guide));
+  cursor: pointer;
 }
 
 @media (prefers-reduced-motion: reduce) {

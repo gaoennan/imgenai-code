@@ -317,7 +317,7 @@ function AgentRow({
     : "";
 
   return (
-    <div className="gw-agent" data-expanded={expanded}>
+    <div className="gw-agent" data-agent-row={agent.agent} data-expanded={expanded}>
       {/* 已接入时整行点击展开详情，模型下拉和开关各管各的。 */}
       <div
         className="gw-agent-row cx-row"

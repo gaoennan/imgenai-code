@@ -28,8 +28,9 @@ it("启动时先读设置文件再决定弹不弹问卷，「稍后设置」也�
   assert.match(app, /const \[agentFocusOpen, setAgentFocusOpen\] = useState\(false\);/);
   assert.match(app, /const \[agentFocusChecking, setAgentFocusChecking\] = useState\(needAgentFocusPrompt\);/);
   assert.match(app, /void resolveAgentFocusPrompt\(async \(\) => \{\n\s*\/\/[^\n]*\n\s*const result = await invoke<SettingsResult>\("load_settings"\);\n\s*return isSuccessStatus\(result\.status\) \? result\.settings\.managerAgentFocus : undefined;/);
-  assert.match(app, /if \(ask\) setAgentFocusOpen\(true\);\n\s*setAgentFocusChecking\(false\);/);
-  assert.match(app, /setupOpen && !agentFocusOpen && !agentFocusChecking \?/);
+  // imgenai：不弹问卷，直接记成「只管理 Codex」；判定期间上手指引也不自动弹出。
+  assert.match(app, /if \(ask\) saveAgentFocus\("codex"\);\n\s*setAgentFocusChecking\(false\);/);
+  assert.match(app, /\{guidePanel && !agentFocusOpen && !agentFocusChecking \? \(/);
   // 第一次问就点「稍后设置」：按全部功能记下（本地 + 设置文件），下次不再追问。
   assert.match(app, /if \(!agentFocus\) \{\n\s*\/\/[^\n]*\n\s*saveAgentFocus\("all"\);\n\s*setSetupOpen\(false\);/);
 });

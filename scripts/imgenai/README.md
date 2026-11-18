@@ -13,6 +13,7 @@ imgenai Code 是在开源项目 [Codex++](https://github.com/BigPizzaV3/CodexPlu
 | 拓展供应商 `requiresKey` | `user_scripts.rs` | 没有密钥时不并入网关 |
 | 拓展供应商 `pool` | `crates/codex-plus-core/src/gateway/extension_pool.rs`，调用点在管理器的 `set_extension_config`、拓展开关与启动时 | 登录拿到密钥后把 imgenai 写进供应商池（看得到、能选模型），退出登录时移出 |
 | 池里的 imgenai 自动补新模型 | `extension_pool.rs` 的 `offer_models`，上游检查在管理器 `gateway_commands.rs` 的 `watch_extension_pool_models` | 只加不删：新版 `codexpp.json` 多声明的模型在同步时补上；上游 `/models` 新出的每 6 小时查一次补上。给过的记在供应商的 `extensionOfferedModels`，用户删掉的不再加回。服务端上新型号后仍要在 `codexpp.json` 的 `prices` 补实扣单价并发版，否则用量页按公开价算 |
+| 上手指引 | `apps/codex-plus-manager/src/ImgenaiGuide.tsx`（界面）、`imgenai-guide-model.ts`（按真实状态算当前步骤，有测试），接线在 `App.tsx` | 替代上游的入门清单与界面导览（上游那套教人「添加供应商」）：登录 → 开通 → 让 Codex 用 imgenai（可一键接入）→ 启动 Codex，每步看真实状态打勾，要点的元素用 `data-guide` / `data-agent-row` 等锚点圈出来。首次启动不再问使用模式，直接记成「只管理 Codex」。欢迎卡每台电脑第一次打开时弹一次（已配好的显示怎么用），侧栏「上手指引」和「设置 → 通用 → 重新打开引导」随时再打开；侧栏进度卡只在没配好时出现 |
 | 「添加供应商」目录的 imgenai 入口 | `apps/codex-plus-manager/src/GatewayProviders.tsx` | 点开跳到「imgenai 账户」页；构建时 `rebrand.mjs` 清掉上游赞助商（同行中转站） |
 | 改名为 imgenai Code | `scripts/imgenai/rebrand.mjs` | **只在构建副本上执行**，源码分支保持上游写法 |
 | 仓库首页 | `.github/README.md`、`README_EN.md`、`CONTRIBUTING.md`、`imgenai/hero.svg` | GitHub 优先显示 `.github/` 里的这几份；根目录同名文件保持上游原样，合并时不冲突 |

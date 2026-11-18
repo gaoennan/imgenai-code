@@ -30,6 +30,7 @@ imgenai Code 是 [imgenai](https://imgenai.net) 的桌面客户端，在开源�
 | --- | --- |
 | **登录即用** | 用 imgenai.net 的手机号登录，客户端自动创建「桌面客户端」专用密钥并写进供应商池，不用手抄密钥；也可以在客户端里新建、删除密钥，或改用网站上建好的任意一把 |
 | **多账号** | 可以同时登录多个 imgenai 账号，在账户页一键切换，不用重新输密码 |
+| **上手指引** | 第一次打开时一步步带着登录、开通、接入 Codex，要点的按钮直接圈出来，做完一步自动打勾；侧栏「上手指引」随时重新打开 |
 | **额度与充值** | 查看订阅档位、今日已用和剩余额度；订阅、加油包扫码支付；使用重置卡、开通免费试用 |
 | **用量对得上** | 客户端「用量」页按 imgenai 的价格计费，和官网扣费一致 |
 | **Max 与 Ultra 档位** | Codex 的推理强度里补上 Max 和 Ultra |
@@ -40,6 +41,8 @@ imgenai Code 是 [imgenai](https://imgenai.net) 的桌面客户端，在开源�
 继承自 Codex++ 的部分：50 多个 Agent 共用一份供应商池的本地网关、Codex 与 Claude Code 的会话管理、Codex 界面增强与多开、拓展、Computer Use 共享等，介绍见 [Codex++ 项目主页](https://github.com/BigPizzaV3/CodexPlusPlus)。
 
 ## 快速上手
+
+第一次打开客户端会弹出「上手指引」，跟着点就行。下面是同样的几步。
 
 **1. 下载安装包**：前往 [Releases](https://github.com/gaoennan/imgenai-code/releases)。
 
@@ -52,7 +55,7 @@ imgenai Code 是 [imgenai](https://imgenai.net) 的桌面客户端，在开源�
 
 **3. 开通订阅**：账户页里选档位扫码支付，或先开通免费试用。开通后 imgenai 会自动出现在「供应商池」里。
 
-**4. 接入 Codex**：在「Agent 接入」里打开 Codex，默认模型选 imgenai 开头的模型，再点「启动 Codex」。
+**4. 接入 Codex**：在上手指引里点「一键接入」；也可以到侧栏「Codex 接入」，点 Codex 那一行的「默认模型」，选 imgenai 下的任意模型。最后点「启动 Codex」。
 
 ## 常见问题
 

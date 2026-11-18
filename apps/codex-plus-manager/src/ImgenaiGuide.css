@@ -1,0 +1,373 @@
+/* imgenai 上手指引。面板、圈和欢迎卡挂在 body 下（主题类名在 <html> 上，颜色变量照常可用）；进度卡在侧栏里。 */
+
+/* 指引专用的强调色：管理器的 --brand-accent 在 Cursor 风格层里是灰色，圈出来不显眼，这里用 imgenai 的紫色。 */
+:root {
+  --imgenai-guide: 250 84% 64%;
+}
+
+/* ---- 侧栏进度卡 ---- */
+.imgenai-guide-card {
+  flex: none;
+  margin: 8px 0 4px;
+  padding: 10px 12px 12px;
+  border: 1px solid hsl(var(--imgenai-guide) / 0.45);
+  border-radius: 10px;
+  background: hsl(var(--imgenai-guide) / 0.07);
+  color: hsl(var(--foreground));
+}
+
+.imgenai-guide-card header,
+.imgenai-guide-panel header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.imgenai-guide-card header strong,
+.imgenai-guide-panel header strong {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 650;
+}
+
+.imgenai-guide-card header strong svg,
+.imgenai-guide-panel header strong svg {
+  color: hsl(var(--imgenai-guide));
+}
+
+.imgenai-guide-count {
+  color: hsl(var(--muted-foreground));
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+}
+
+.imgenai-guide-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+}
+
+.imgenai-guide-icon:hover {
+  background: hsl(var(--accent));
+  color: hsl(var(--foreground));
+}
+
+.imgenai-guide-bar {
+  height: 4px;
+  margin: 8px 0 7px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: hsl(var(--border));
+}
+
+.imgenai-guide-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: hsl(var(--imgenai-guide));
+  transition: width 0.3s ease;
+}
+
+.imgenai-guide-card p {
+  margin: 0 0 9px;
+  color: hsl(var(--foreground) / 0.8);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.imgenai-guide-card .imgenai-guide-primary {
+  width: 100%;
+  justify-content: center;
+}
+
+/* ---- 按钮 ---- */
+.imgenai-guide-primary,
+.imgenai-guide-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 29px;
+  padding: 0 12px;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.imgenai-guide-primary {
+  border: 0;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.imgenai-guide-primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.imgenai-guide-ghost {
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+}
+
+.imgenai-guide-ghost:hover:not(:disabled) {
+  background: hsl(var(--accent));
+}
+
+.imgenai-guide-primary:disabled,
+.imgenai-guide-ghost:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.imgenai-guide-primary:focus-visible,
+.imgenai-guide-ghost:focus-visible,
+.imgenai-guide-icon:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+.imgenai-guide-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* ---- 步骤列表（欢迎卡与面板共用） ---- */
+.imgenai-guide-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.imgenai-guide-steps li {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  color: hsl(var(--muted-foreground));
+  font-size: 12.5px;
+  line-height: 20px;
+}
+
+.imgenai-guide-steps li > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.imgenai-guide-steps li[data-active="true"] {
+  background: hsl(var(--imgenai-guide) / 0.08);
+  color: hsl(var(--foreground));
+  font-weight: 600;
+}
+
+.imgenai-guide-steps li[data-done="true"] > div > span,
+.imgenai-guide-welcome .imgenai-guide-steps li[data-done="true"] {
+  text-decoration: line-through;
+  text-decoration-color: hsl(var(--muted-foreground) / 0.5);
+}
+
+.imgenai-guide-num {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 50%;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.imgenai-guide-steps li[data-active="true"] .imgenai-guide-num {
+  border-color: hsl(var(--imgenai-guide));
+  background: hsl(var(--imgenai-guide));
+  color: white;
+}
+
+.imgenai-guide-steps li[data-done="true"] .imgenai-guide-num {
+  border-color: hsl(var(--success, 142 71% 40%));
+  background: hsl(var(--success, 142 71% 40%));
+  color: white;
+}
+
+.imgenai-guide-current p {
+  margin: 4px 0 0;
+  color: hsl(var(--foreground) / 0.82);
+  font-size: 12.5px;
+  font-weight: 400;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.imgenai-guide-current[data-blocking="true"] {
+  margin-bottom: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: hsl(var(--warning, 38 92% 50%) / 0.12);
+}
+
+.imgenai-guide-current[data-blocking="true"] strong {
+  font-size: 12.5px;
+}
+
+/* ---- 右下角的指引面板：不挡页面操作 ---- */
+.imgenai-guide-panel {
+  box-sizing: border-box;
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 950;
+  width: min(340px, calc(100vw - 36px));
+  max-height: calc(100vh - 36px);
+  overflow: auto;
+  padding: 12px 12px 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  box-shadow: 0 18px 50px rgb(0 0 0 / 0.28);
+}
+
+.imgenai-guide-panel header {
+  margin: 0 0 8px 2px;
+}
+
+.imgenai-guide-panel[data-collapsed="true"] header {
+  margin-bottom: 4px;
+}
+
+.imgenai-guide-collapsed {
+  width: 100%;
+  padding: 4px 2px 2px;
+  border: 0;
+  background: transparent;
+  color: hsl(var(--foreground) / 0.8);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* ---- 圈出要点的元素 ---- */
+.imgenai-guide-ring {
+  position: fixed;
+  z-index: 940;
+  border: 2px solid hsl(var(--imgenai-guide));
+  border-radius: 9px;
+  pointer-events: none;
+  animation: imgenai-guide-pulse 1.6s ease-out infinite;
+  transition: left 0.2s ease, top 0.2s ease, width 0.2s ease, height 0.2s ease;
+}
+
+@keyframes imgenai-guide-pulse {
+  0% { box-shadow: 0 0 0 0 hsl(var(--imgenai-guide) / 0.45); }
+  70% { box-shadow: 0 0 0 10px hsl(var(--imgenai-guide) / 0); }
+  100% { box-shadow: 0 0 0 0 hsl(var(--imgenai-guide) / 0); }
+}
+
+.imgenai-guide-pointer {
+  position: fixed;
+  z-index: 941;
+  padding: 4px 9px;
+  border-radius: 6px;
+  background: hsl(var(--imgenai-guide));
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.2);
+}
+
+.imgenai-guide-pointer[data-side="right"] {
+  transform: translateY(-50%);
+}
+
+.imgenai-guide-pointer[data-side="right"]::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: -5px;
+  border-width: 5px 5px 5px 0;
+  border-style: solid;
+  border-color: transparent hsl(var(--imgenai-guide)) transparent transparent;
+  transform: translateY(-50%);
+}
+
+/* ---- 第一次打开的欢迎卡 ---- */
+.imgenai-guide-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  background: rgb(0 0 0 / 0.5);
+}
+
+.imgenai-guide-welcome {
+  box-sizing: border-box;
+  width: min(400px, 100%);
+  max-height: calc(100vh - 24px);
+  overflow: auto;
+  padding: 20px 20px 16px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 14px;
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  box-shadow: 0 18px 50px rgb(0 0 0 / 0.35);
+}
+
+.imgenai-guide-welcome h3 {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.imgenai-guide-welcome > p {
+  margin: 0 0 14px;
+  color: hsl(var(--muted-foreground));
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.imgenai-guide-welcome .imgenai-guide-steps li {
+  color: hsl(var(--foreground));
+  font-size: 13px;
+}
+
+.imgenai-guide-welcome .imgenai-guide-actions {
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .imgenai-guide-ring {
+    animation: none;
+    transition: none;
+  }
+
+  .imgenai-guide-bar i {
+    transition: none;
+  }
+}

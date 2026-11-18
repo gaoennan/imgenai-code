@@ -21,6 +21,7 @@ imgenai Code is the desktop client for [imgenai](https://imgenai.net), built on 
 | --- | --- |
 | **Sign in and go** | Sign in with your imgenai.net phone number; a dedicated "desktop client" key is created and written into the provider pool, or create, delete and switch between your keys right in the app |
 | **Multiple accounts** | Stay signed in to several imgenai accounts and switch between them in one click, without typing the password again |
+| **Getting started guide** | On first launch, walks you through signing in, subscribing and connecting Codex, highlights what to click, and checks off each step as it's done; reopen it any time from "上手指引" (Getting started) in the sidebar |
 | **Quota and top-ups** | See your plan, today's usage and remaining quota; pay for plans and boost packs by QR code; use reset cards or start a free trial |
 | **Matching usage** | The Usage page prices requests with imgenai's rates, so it matches what the website charges |
 | **Max and Ultra** | Adds Max and Ultra to Codex's reasoning effort menu |
@@ -30,10 +31,12 @@ imgenai Code is the desktop client for [imgenai](https://imgenai.net), built on 
 
 ## Getting started
 
+The first time you open the app, a getting-started guide walks you through these steps.
+
 1. Download from [Releases](https://github.com/gaoennan/imgenai-code/releases): `imgenaiCode-<version>-macos-universal.dmg` for macOS (Apple silicon and Intel) or `imgenaiCode-<version>-windows-x64-setup.exe` for Windows.
 2. Open imgenai Code, go to "imgenai 账户" (imgenai account) under the gateway section, and sign in with your imgenai.net account.
 3. Subscribe by QR code or start a free trial. imgenai then appears in the provider pool.
-4. Under "Agent 接入" (Agents), turn on Codex, pick a model starting with imgenai, and launch Codex.
+4. Click "Connect for me" in the guide, or open "Codex 接入" (Codex setup) in the sidebar, click the default model on the Codex row and pick any model under imgenai. Then launch Codex.
 
 The Windows installer is not code-signed yet. If SmartScreen appears, click "More info" and then "Run anyway". The macOS build is signed with an Apple Developer ID, but Apple notarization is still pending. The first time you open a copy downloaded from the web, macOS says it cannot verify the app is free of malware. Click "Done", go to System Settings → Privacy & Security, click "Open Anyway" near the bottom and enter your password. On macOS 14 and earlier you can also Control-click imgenai Code in Applications and choose "Open". Updating from inside the app does not show this prompt.
 

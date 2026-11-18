@@ -158,8 +158,9 @@ import { agentTabGroups, agentTarget, pageVisibleForTool } from "./page-groups";
 import { TopbarActions } from "./TopbarActions";
 import { CodexLaunchButton, type CodexLaunchState } from "./CodexLaunchButton";
 import { OnboardingTour } from "./OnboardingTour";
-import { OnboardingSetup } from "./OnboardingSetup";
-import { hasCodexEnhancements, SETUP_STORAGE_KEY, serializeSetupState, shouldShowSetup } from "./onboarding-setup-model";
+import { guideLabel, ImgenaiGuideCard, ImgenaiGuidePanel, markWelcomed, readGuideRecord, readWelcomed, writeGuideRecord, type GuideActions } from "./ImgenaiGuide";
+import { IMGENAI_ACCOUNT_KEY, type GuideRecord } from "./imgenai-guide-model";
+import { SETUP_STORAGE_KEY, serializeSetupState, shouldShowSetup } from "./onboarding-setup-model";
 import { AgentFocusDialog } from "./AgentFocusDialog";
 import { AgentDisconnectDialog } from "./AgentDisconnectDialog";
 import { agentVisible, commitAgentFocusSelection, providersHidden, singleAgent, type AgentFocus, type FocusMode } from "./agent-focus-model";
@@ -1787,6 +1788,14 @@ export function App() {
   const [builtinPagesShown, setBuiltinPagesShown] = useState<Set<string>>(() => new Set());
   const [tourOpen, setTourOpen] = useState(false);
   const [setupOpen, setSetupOpen] = useState(initialSetupOpen);
+  // imgenai：上手指引替代上游的入门清单与界面导览（见 ImgenaiGuide.tsx）。
+  const [guideRecord, setGuideRecord] = useState(readGuideRecord);
+  // 每台电脑第一次打开时弹一次欢迎卡（点过「开始」或「以后再说」才记下）；侧栏「上手指引」随时再打开。
+  const [guidePanel, setGuidePanel] = useState<"welcome" | "guide" | null>(() => (readWelcomed() ? null : "welcome"));
+  const recordGuide = useCallback((state: GuideRecord) => {
+    writeGuideRecord(state);
+    setGuideRecord(state);
+  }, []);
   // 使用模式（只管理 Codex / 全部功能）：没问过就先问，问完再进首次引导（引导按模式换说法）。
   const agentFocus = useAgentFocus();
   // 问卷等设置文件读回来再决定弹不弹（#2936）：本地存储为空不等于没选过，设置文件里可能记着。
@@ -1802,7 +1811,8 @@ export function App() {
       return isSuccessStatus(result.status) ? result.settings.managerAgentFocus : undefined;
     }).then((ask) => {
       if (disposed) return;
-      if (ask) setAgentFocusOpen(true);
+      // imgenai：不问使用模式，直接按「只管理 Codex」（imgenai 只接 Codex），设置里随时可改。
+      if (ask) saveAgentFocus("codex");
       setAgentFocusChecking(false);
     });
     return () => { disposed = true; };
@@ -5192,34 +5202,24 @@ export function App() {
             ? tf("{0} 接入", [agentName(soloAgent)])
             : routeTitle(navAliasRoute[route] ?? route);
 
-  // 入门清单放在侧栏底部（参照 Cursor 的 Getting Started 卡片）：平时收成一张进度卡，点开在上方展开清单。
-  const setupCard = setupOpen && !agentFocusOpen && !agentFocusChecking ? (
-          <OnboardingSetup
-            focus={agentFocus}
-            codexInstalled={overview ? overview.codex_app.status === "found" : null}
-            codexRunning={codexAppRunning}
-            launchPending={launchPending}
-            codexEnhancementsEnabled={hasCodexEnhancements(settings)}
-            notify={actions.showMessage}
-            onChangeMode={() => setAgentFocusOpen(true)}
-            onDismiss={closeSetup}
-            onTour={() => setTourOpen(true)}
-            onNavigate={(target, agent) => { if (agent) void switchTool(agent, target); else void navigate(target); }}
-            onCheckCodex={async () => {
-              const currentApp = await run(() => call<OverviewResult>("load_overview"));
-              const currentSettings = await run(() => call<SettingsResult>("load_settings"));
-              if (!currentApp || !currentSettings || !isSuccessStatus(currentApp.status) || !isSuccessStatus(currentSettings.status)) return false;
-              setOverview(currentApp);
-              const fresh = normalizeSettings(currentSettings.settings);
-              const previous = normalizeSettings(settingsRef.current?.settings ?? currentSettings.settings);
-              setSettings(currentSettings);
-              setSettingsForm((current) => rebaseSettingsEdits(normalizeSettings(current), previous, fresh));
-              return currentApp.codex_app.status === "found" && hasCodexEnhancements(currentSettings);
-            }}
-            onLaunch={() => codexAppRunning ? restart() : launch()}
-            defaultExpanded={false}
-          />
-        ) : null;
+  // imgenai：侧栏底部放上手指引的进度卡（替代上游的入门清单），右下角的指引面板按真实状态一步步带着做。
+  const guideEnv = { focus: agentFocus, codexInstalled: overview ? overview.codex_app.status === "found" : null, codexRunning: codexAppRunning };
+  const guideActions: GuideActions = {
+    notify: actions.showMessage,
+    openAccount: () => {
+      if (extensionPages.some((page) => page.key === IMGENAI_ACCOUNT_KEY)) openExtensionPage(IMGENAI_ACCOUNT_KEY);
+      else void navigate("userScripts");
+    },
+    openGateway: () => void navigate("gateway"),
+    openCodexSettings: () => void switchTool("codex", "agentSettings"),
+    switchToCodexMode: () => saveAgentFocus("codex"),
+    launch: () => codexAppRunning ? restart() : launch(),
+    restart: () => restart(),
+    launchPending,
+  };
+  const setupCard = guideRecord === null ? (
+    <ImgenaiGuideCard env={guideEnv} hidden={guidePanel !== null} onOpen={() => setGuidePanel("guide")} onRecord={recordGuide} />
+  ) : null;
 
   return (
     <div className={`shell ${theme}`}>
@@ -5239,6 +5239,7 @@ export function App() {
         onOpenExtensionPage={openExtensionPage}
         onToggleTheme={actions.toggleTheme}
         onOpenPalette={() => setPaletteOpen(true)}
+        onOpenGuide={() => setGuidePanel("welcome")}
         pendingUpdateVersion={update?.latestVersion && updateNotifications.current.shouldRemind(update) ? update.latestVersion : null}
         pendingUpdateReady={Boolean(update?.updateAvailable && update.latestVersion && (update.downloaded || (updateDownload?.version === update.latestVersion && updateDownload.state === "ready")))}
         pendingUpdateProgress={update?.latestVersion && updateDownload?.version === update.latestVersion && updateDownload.state === "downloading" ? (updateDownload.percent ?? -1) : null}
@@ -5286,6 +5287,27 @@ export function App() {
         />
       ) : null}
       {tourOpen && !agentFocusOpen ? <OnboardingTour focus={agentFocus} onClose={closeTour} /> : null}
+      {guidePanel && !agentFocusOpen && !agentFocusChecking ? (
+        <ImgenaiGuidePanel
+          env={guideEnv}
+          location={{ route, extensionKey: route === "extension" ? extensionPageKey : null }}
+          actions={guideActions}
+          welcome={guidePanel === "welcome"}
+          onStart={() => {
+            markWelcomed();
+            setGuidePanel("guide");
+          }}
+          onClose={() => {
+            markWelcomed();
+            setGuidePanel(null);
+          }}
+          onFinish={() => {
+            markWelcomed();
+            recordGuide("completed");
+            setGuidePanel(null);
+          }}
+        />
+      ) : null}
       <main className="workspace">
         <section
           className={`screen ${isManagementScreen ? "management-screen" : ""} ${route === "requestLog" ? "request-log-screen" : ""}`.trim()}
@@ -5585,7 +5607,7 @@ export function App() {
               <div className="sectioned-body">
                 <AppSettingsFocus focus={settingsFocus} onDone={() => setSettingsFocus(null)} />
                 <GlobalSettingsScreen
-                  onOpenTour={() => setSetupOpen(true)}
+                  onOpenTour={() => setGuidePanel("welcome")}
                   agentFocus={agentFocus}
                   onOpenAgentFocus={() => setAgentFocusOpen(true)}
                   dirty={settingsDirty}
@@ -17586,6 +17608,7 @@ function AppSidebar({
   onNavigate,
   onToggleTheme,
   onOpenPalette,
+  onOpenGuide,
   pendingUpdateVersion,
   pendingUpdateReady = false,
   pendingUpdateProgress = null,
@@ -17628,6 +17651,8 @@ function AppSidebar({
   onNavigate: (route: Route) => void;
   onToggleTheme: () => void;
   onOpenPalette: () => void;
+  /** imgenai：侧栏「上手指引」入口。 */
+  onOpenGuide?: () => void;
   /** 后台检查到的新版本号；没有新版本时为 null。 */
   pendingUpdateVersion: string | null;
   /** 新版本的安装包已经在后台下好：卡片直接写「点击安装」。 */
@@ -17803,7 +17828,16 @@ function AppSidebar({
       </button>
 
       <nav aria-label={t("主导航")} className="cx-side-nav">
-        <div className="cx-side-group">{shownGeneral.map(renderEntry)}</div>
+        <div className="cx-side-group">
+          {shownGeneral.map(renderEntry)}
+          {/* imgenai：上手指引入口，点开是欢迎卡（不是页面，不参与选中）。 */}
+          {onOpenGuide ? (
+            <button className="cx-side-item" data-guide="open-guide" onClick={onOpenGuide} title={guideLabel()} type="button">
+              <CircleHelp aria-hidden="true" className="cx-side-icon" />
+              <span className="cx-side-label">{guideLabel()}</span>
+            </button>
+          ) : null}
+        </div>
 
         {shownGateway.length ? (
           <div className="cx-side-group" data-group="gateway">
@@ -17872,6 +17906,7 @@ function AppSidebar({
                     <button
                       aria-label={label}
                       className="cx-side-run"
+                      data-guide="codex-run"
                       data-running={codexRun.running}
                       data-unattached={unattached}
                       data-unavailable={!codexRun.running && Boolean(codexRun.unavailableReason)}

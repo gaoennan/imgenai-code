@@ -2033,6 +2033,9 @@ pub struct ExtensionProvider {
     /// `prices`：按模型的价格（每百万 token、美元），写进供应商池时作为这家的模型价格、之后每次同步都以它为准，
     /// 用量页的费用就和服务商实际扣费一致（服务商价格与公开价不同时用）。
     pub prices: BTreeMap<String, crate::gateway::store::ProviderPrice>,
+    /// `fast: true`：这家的模型都支持 Fast（`service_tier: priority`）。写进供应商池时给每个模型标上
+    /// `codex_plus_fast_support: "supported"`，Codex 的模型目录才带 Fast 档位、界面才出现 Fast 按钮。
+    pub fast: bool,
 }
 
 /// 拓展的一条定时任务：每隔 `every_minutes` 分钟（或每天 `at` 时刻）调用后台方法 `method`。
@@ -2139,6 +2142,7 @@ fn parse_extension_providers(value: Option<&Value>, schema: &[ExtensionConfigFie
             let override_existing = item.get("override").and_then(Value::as_bool).unwrap_or(false);
             let requires_key = item.get("requiresKey").and_then(Value::as_bool).unwrap_or(false);
             let pool = item.get("pool").and_then(Value::as_bool).unwrap_or(false);
+            let fast = item.get("fast").and_then(Value::as_bool).unwrap_or(false);
             let prices = match item.get("prices") {
                 None | Some(Value::Null) => BTreeMap::new(),
                 Some(Value::Object(table)) => table
@@ -2161,7 +2165,7 @@ fn parse_extension_providers(value: Option<&Value>, schema: &[ExtensionConfigFie
                     .collect::<anyhow::Result<BTreeMap<_, _>>>()?,
                 Some(_) => anyhow::bail!("providers.{id}.prices 要写成 {{ \"模型\": {{ \"input\", \"cachedInput\", \"output\" }} }}"),
             };
-            Ok(ExtensionProvider { name: if text("name").is_empty() { id.clone() } else { text("name") }, id, protocol, base_url, api_key, api_key_config, models, discover_models, override_existing, requires_key, pool, prices })
+            Ok(ExtensionProvider { name: if text("name").is_empty() { id.clone() } else { text("name") }, id, protocol, base_url, api_key, api_key_config, models, discover_models, override_existing, requires_key, pool, prices, fast })
         })
         .collect()
 }

@@ -23,7 +23,8 @@ imgenai Code is the desktop client for [imgenai](https://imgenai.net), built on 
 | **Multiple accounts** | Stay signed in to several imgenai accounts and switch between them in one click, without typing the password again |
 | **Getting started guide** | Opens when the app starts and walks you through signing in, subscribing and connecting Codex, highlights what to click, and checks off each step as it's done (finished steps can be reopened); tick "Don't show on startup" to stop it popping up, and reopen it any time from "上手指引" (Getting started) in the sidebar |
 | **Quota and top-ups** | See your plan, today's usage and remaining quota; pay for plans and boost packs by QR code; use reset cards or start a free trial |
-| **Matching usage** | The Usage page prices requests with imgenai's rates, so it matches what the website charges |
+| **Matching usage** | The Usage page prices requests with imgenai's rates, so it matches what the website charges (Fast requests are shown at the standard price; the website shows the actual charge) |
+| **Fast mode** | Every imgenai model supports Codex Fast: output is about twice as fast and billed at 2.5x the standard price. The app turns on "原生 Fast 强制解锁" (native Fast unlock) for you; restart Codex and toggle Fast below the chat box |
 | **Max and Ultra** | Adds Max and Ultra to Codex's reasoning effort menu |
 | **Old chats keep working** | Chats created with other providers no longer report "provider configuration removed" |
 | **No first-turn stall** | Falls back to HTTP when the upstream rejects WebSocket, instead of waiting a dozen seconds |

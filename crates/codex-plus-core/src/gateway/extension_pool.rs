@@ -11,6 +11,8 @@
 //! - Key 清空（退出登录）、拓展停用或删除：从池里移除（连同 Agent 里指向它的模型，同手动删除）。
 //! - 新模型自动补进列表（只加不删）：新版拓展声明的、以及声明了 `discoverModels` 的上游新出的
 //!   （见 [`offer_models`]）。给过的记在供应商上，用户自己删掉的不会再被加回来。
+//! - 声明了 `fast` 的：池里这家的每个模型（包括之后补进来的）都在 `model_metadata` 里标成支持 Fast，
+//!   Codex 的模型目录带上 Fast 档位，界面才有 Fast 按钮。用户自己给某个模型写过 Fast 声明的不改。
 //!
 //! 池里有了同 id 的成员，路由时拓展自己的那份就不再并入（以池里的为准），不会出现两份。
 
@@ -84,6 +86,9 @@ pub fn sync(store: &GatewayStore, manager: &UserScriptManager) -> anyhow::Result
                 .prices
                 .iter()
                 .any(|(model, price)| existing.model_prices.get(model) != Some(price));
+            if mark_fast(store, &id, provider.fast)? {
+                outcome.changed = true;
+            }
             if stale_prices {
                 store.update(|gateway| {
                     if let Some(entry) = gateway.providers.iter_mut().find(|entry| entry.relay.id == id) {
@@ -113,6 +118,7 @@ pub fn sync(store: &GatewayStore, manager: &UserScriptManager) -> anyhow::Result
         let (_, id) = apply::create_provider(store, &input, source, None)?;
         // 声明的模型记为给过，之后只补新出的。
         offer_models(store, &id, &provider.models)?;
+        mark_fast(store, &id, provider.fast)?;
         outcome.changed = true;
         if provider.discover_models {
             outcome.created.push(id);
@@ -193,7 +199,82 @@ fn offer_into(provider: &mut GatewayProvider, models: &[String]) -> anyhow::Resu
     let added = if missing.is_empty() { Vec::new() } else { append_models(provider, &missing)? };
     offered.extend(fresh);
     provider.extra.insert(OFFERED_FIELD.to_string(), serde_json::json!(offered));
+    // 新补进来的模型也标上 Fast（拓展声明了 `fast` 时）。
+    declare_fast_models(provider);
     Ok(Offered { added, changed: true })
+}
+
+/// 拓展声明了 `fast`，记在供应商的 `extra` 里，之后从上游补进来的模型也据此标上 Fast。
+const FAST_FIELD: &str = "extensionFastSupport";
+/// 模型元数据里的 Fast 声明，见 [`crate::model_suffix::apply_model_fast_support`]。
+const FAST_DECLARATION: &str = "codex_plus_fast_support";
+
+/// 按拓展的 `fast` 声明更新池里这家：记下声明，并给现有模型都标上 Fast。没有要写的就不碰文件。
+fn mark_fast(store: &GatewayStore, id: &str, fast: bool) -> anyhow::Result<bool> {
+    let pooled = |provider: &&mut GatewayProvider| provider.relay.id == id && provider.source.starts_with(SOURCE_PREFIX);
+    let mut gateway = store.load()?;
+    let Some(provider) = gateway.providers.iter_mut().find(pooled) else {
+        return Ok(false);
+    };
+    if !fast_into(provider, fast) {
+        return Ok(false);
+    }
+    let (_, changed) = store.update(|gateway| {
+        Ok(gateway.providers.iter_mut().find(pooled).is_some_and(|provider| fast_into(provider, fast)))
+    })?;
+    Ok(changed)
+}
+
+fn fast_into(provider: &mut GatewayProvider, fast: bool) -> bool {
+    let recorded = provider.extra.get(FAST_FIELD).and_then(serde_json::Value::as_bool) == Some(true);
+    let mut changed = false;
+    if fast && !recorded {
+        provider.extra.insert(FAST_FIELD.to_string(), serde_json::Value::Bool(true));
+        changed = true;
+    } else if !fast && recorded {
+        // 新版拓展不再声明：之后补的模型不再标，已经标上的保留（用户可能在用）。
+        provider.extra.remove(FAST_FIELD);
+        changed = true;
+    }
+    declare_fast_models(provider) || changed
+}
+
+/// 给池里这家没写过 Fast 声明的模型标上「支持」。`model_metadata` 不是合法 JSON 对象时不动（留给用户改）。
+fn declare_fast_models(provider: &mut GatewayProvider) -> bool {
+    if provider.extra.get(FAST_FIELD).and_then(serde_json::Value::as_bool) != Some(true) {
+        return false;
+    }
+    let raw = provider.relay.model_metadata.trim();
+    let mut metadata = if raw.is_empty() {
+        serde_json::Map::new()
+    } else {
+        match serde_json::from_str::<serde_json::Value>(raw) {
+            Ok(serde_json::Value::Object(map)) => map,
+            _ => return false,
+        }
+    };
+    let mut changed = false;
+    for model in crate::gateway::route::relay_models(&provider.relay) {
+        let existing = metadata.keys().find(|key| key.eq_ignore_ascii_case(&model)).cloned();
+        match existing.and_then(|key| metadata.get_mut(&key)) {
+            Some(serde_json::Value::Object(entry)) => {
+                if !entry.contains_key(FAST_DECLARATION) {
+                    entry.insert(FAST_DECLARATION.to_string(), serde_json::json!("supported"));
+                    changed = true;
+                }
+            }
+            // 不是对象的条目解析时会报错，不替用户改。
+            Some(_) => {}
+            None => {
+                metadata.insert(model, serde_json::json!({ FAST_DECLARATION: "supported" }));
+                changed = true;
+            }
+        }
+    }
+    if changed {
+        provider.relay.model_metadata = serde_json::Value::Object(metadata).to_string();
+    }
+    changed
 }
 
 /// 声明了 `discoverModels` 的拓展池成员的来源：这些成员上游一出新模型就自动补进列表
@@ -211,4 +292,44 @@ pub fn discovering_sources(manager: &UserScriptManager) -> Vec<String> {
 fn same_url(left: &str, right: &str) -> bool {
     let clean = |url: &str| url.trim().trim_end_matches('/').to_ascii_lowercase();
     clean(left) == clean(right)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::settings::{RelayMode, RelayProfile};
+
+    /// 内置资料里还没有的新模型（如 gpt-6.2-sol）默认不带 Fast 档位；标上声明后目录里才有，Codex 才显示 Fast 按钮。
+    #[test]
+    fn fast_declaration_adds_fast_tier_to_member_catalog() {
+        let relay = |metadata: &str| RelayProfile {
+            id: "imgenai".into(),
+            name: "imgenai".into(),
+            model: "gpt-6.2-sol".into(),
+            model_list: "gpt-6.2-sol".into(),
+            base_url: "https://api.imgenai.net/v1".into(),
+            api_key: "sk-test".into(),
+            relay_mode: RelayMode::PureApi,
+            model_metadata: metadata.into(),
+            ..RelayProfile::default()
+        };
+        let tiers = |profile: &RelayProfile| -> Vec<String> {
+            let payload = crate::aggregate_catalog::build_member_catalog(profile).unwrap();
+            let entry = payload["models"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry["slug"] == "gpt-6.2-sol")
+                .cloned()
+                .unwrap();
+            entry["service_tiers"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|tier| tier.get("id").or(Some(tier)).and_then(serde_json::Value::as_str).map(str::to_string))
+                .collect()
+        };
+        assert!(!tiers(&relay("")).iter().any(|tier| tier == "priority"));
+        let declared = r#"{"gpt-6.2-sol":{"codex_plus_fast_support":"supported"}}"#;
+        assert!(tiers(&relay(declared)).iter().any(|tier| tier == "priority"));
+    }
 }

@@ -497,6 +497,27 @@ fn imgenai_pool_member_picks_up_new_models() {
     assert_eq!(models().first().map(String::as_str), Some("gpt-6.2-sol"));
     assert!(has("gpt-6.2-astra") && has("gpt-6.1-sol"));
     assert_eq!(extension_pool::sync(&store, &manager).unwrap(), PoolSync::default());
+
+    // 拓展声明了 fast：每个模型都标成支持 Fast，Codex 里才有 Fast 按钮。
+    let fast_of = |model: &str| -> Option<String> {
+        let metadata: Value = serde_json::from_str(&member().relay.model_metadata).ok()?;
+        metadata[model]["codex_plus_fast_support"].as_str().map(str::to_string)
+    };
+    for model in models() {
+        assert_eq!(fast_of(&model).as_deref(), Some("supported"), "{model} 没标 Fast");
+    }
+    // 用户自己改成不支持的保留，之后同步不改回来。
+    store
+        .update(|gateway| {
+            let entry = gateway.providers.iter_mut().find(|entry| entry.relay.id == "imgenai").unwrap();
+            let mut metadata: Value = serde_json::from_str(&entry.relay.model_metadata).unwrap();
+            metadata["gpt-6.1-sol"] = json!({ "codex_plus_fast_support": "unsupported", "context_window": 400000 });
+            entry.relay.model_metadata = metadata.to_string();
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(extension_pool::sync(&store, &manager).unwrap(), PoolSync::default());
+    assert_eq!(fast_of("gpt-6.1-sol").as_deref(), Some("unsupported"));
     assert_eq!(
         extension_pool::discovering_sources(&manager),
         vec!["extension-pool:imgenai-account/imgenai".to_string()]
@@ -544,6 +565,8 @@ fn imgenai_pool_member_picks_up_new_models() {
     let offered = extension_pool::offer_models(&store, "imgenai", &upstream).unwrap();
     assert_eq!(offered.added, vec!["gpt-6.3-sol".to_string()], "删掉的 6.2-astra 不加回来");
     assert_eq!(models().last().map(String::as_str), Some("gpt-6.3-sol"));
+    assert_eq!(fast_of("gpt-6.3-sol").as_deref(), Some("supported"), "上游新补的模型也标 Fast");
+    assert_eq!(fast_of("gpt-6.1-sol").as_deref(), Some("unsupported"));
     assert_eq!(member().upstream_new, vec!["gpt-6.2-astra".to_string()]);
     assert_eq!(extension_pool::offer_models(&store, "imgenai", &upstream).unwrap(), Offered::default());
 

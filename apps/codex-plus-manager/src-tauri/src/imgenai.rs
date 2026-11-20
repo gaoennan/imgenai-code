@@ -1,6 +1,8 @@
 //! imgenai 分发版专有的启动 / 退出步骤，集中在这里，合并上游时不和上游的启动流程搅在一起。
 //!
 //! - 首次启动：默认开机启动、登录时隐藏到托盘（只设一次，用户之后关掉就不再打开）。
+//! - 打开「原生 Fast 强制解锁」（每台电脑一次，含旧版升级上来的）：imgenai 的模型都支持 Fast，
+//!   纯 API Key 登录的 Codex 默认不显示 Fast 按钮。
 //! - 启动时：上次退出切成直连 imgenai 的 Codex 配置改回网关（必须在网关接入、自动接管、启动 Codex 之前）。
 //! - 退出时：Codex 还连着本机网关的话改成直连 imgenai，客户端没开时 Codex 照样能用。
 //! - 启动时（Windows）：当前用户的 NO_PROXY 补上回环地址，开着代理时 Codex 发往本机网关的请求不被交给代理
@@ -37,6 +39,29 @@ pub fn apply_first_run_defaults() {
     }
     let _ = std::fs::write(&marker, b"autostart+minimized\n");
     log("imgenai.first_run_defaults", json!({ "autostart": true, "startMinimized": true }));
+}
+
+/// 「原生 Fast 强制解锁」已经替用户打开过的标记。
+const FAST_DEFAULT_MARKER: &str = "imgenai-fast-default-v1";
+
+/// imgenai 的模型都支持 Fast（服务端按 2.5 倍计费）：纯 API Key 登录的 Codex 默认不显示 Fast 按钮，
+/// 这里给每台电脑打开一次「原生 Fast 强制解锁」，下次启动 Codex 时生效。用户之后关掉就不再打开；
+/// 设成功才写标记，失败的下次启动再试。
+pub fn enable_native_fast_once() {
+    let marker = codex_plus_core::paths::default_app_state_dir().join(FAST_DEFAULT_MARKER);
+    if marker.exists() {
+        return;
+    }
+    let store = codex_plus_core::settings::SettingsStore::default();
+    if let Err(error) = store.update(json!({ "codexAppNativeFastUnlock": true })) {
+        log("imgenai.native_fast_default_failed", json!({ "message": error.to_string() }));
+        return;
+    }
+    if let Some(parent) = marker.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&marker, b"codexAppNativeFastUnlock\n");
+    log("imgenai.native_fast_default", json!({ "codexAppNativeFastUnlock": true }));
 }
 
 /// 启动时最先调用：退出时切成直连 imgenai 的 Codex 配置改回网关。

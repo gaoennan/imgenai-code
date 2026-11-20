@@ -3538,6 +3538,16 @@ export function App() {
     }
   };
 
+  /** 在资源管理器 / 访达里选中下好的安装包（还没下好时打开下载目录），方便手动运行安装包。 */
+  const revealUpdateInstaller = async (selectedUpdate = update) => {
+    try {
+      const result = await call<UpdateResult>("reveal_update_installer", { release: releaseOf(selectedUpdate) });
+      if (!isSuccessStatus(result.status)) showNotice(t("打开所在文件夹"), result.message, "failed");
+    } catch (error) {
+      showNotice(t("打开所在文件夹"), stringifyError(error), "failed");
+    }
+  };
+
   const saveSettings = async () => {
     const next = normalizeSettings(settingsForm);
     const dictationIssue = dictationSettingsValidationMessage(dictationSettingsIssue(next.dictation));
@@ -4732,6 +4742,7 @@ export function App() {
       repairShortcuts,
       checkUpdate,
       performUpdate,
+      revealUpdateInstaller: () => revealUpdateInstaller(),
       saveSettings,
       saveSettingsValue,
       autoSaveSettings,
@@ -5645,6 +5656,7 @@ export function App() {
             setUpdatePrompt(null);
           }}
           onUpdate={() => void performUpdate(updatePrompt)}
+          onRevealInstaller={() => void revealUpdateInstaller(updatePrompt)}
           onOpenUrl={(url) => void openExternalUrl(url)}
         />
       ) : null}
@@ -5878,6 +5890,8 @@ type Actions = {
   repairShortcuts: () => Promise<void>;
   checkUpdate: () => Promise<void>;
   performUpdate: () => Promise<void>;
+  /** 在文件管理器里选中下好的安装包。 */
+  revealUpdateInstaller: () => Promise<void>;
   saveSettings: () => Promise<void>;
   saveSettingsValue: (settings: BackendSettings, silent?: boolean) => Promise<BackendSettings | null>;
   autoSaveSettings: (settings: BackendSettings) => Promise<AutoSaveOutcome>;
@@ -11800,6 +11814,9 @@ function AboutScreen({
                   tooltip={download?.state === "failed" ? download.message : undefined}
                 >
                   <button className="cx-secondary" onClick={() => void actions.checkUpdate()} type="button"><RefreshCw />{t("检查更新")}</button>
+                  {latest && (ready || updateInstallProgress.failed) ? (
+                    <button className="cx-secondary" onClick={() => void actions.revealUpdateInstaller()} title={t("在文件管理器里选中下好的安装包，可以手动双击安装")} type="button"><FolderOpen />{t("打开所在文件夹")}</button>
+                  ) : null}
                   {latest ? (
                     <button className="cx-primary" disabled={updateInstallProgress.active} onClick={() => void actions.performUpdate()} type="button">
                       <Download />
@@ -16057,7 +16074,7 @@ function DreamSkinUnsavedDialog({
   );
 }
 
-function UpdateDialog({ update, progress, downloaded = false, onClose, onSkipVersion, onMuteToday, onUpdate, onOpenUrl }: {
+function UpdateDialog({ update, progress, downloaded = false, onClose, onSkipVersion, onMuteToday, onUpdate, onRevealInstaller, onOpenUrl }: {
   update: UpdateResult;
   progress: TaskProgress;
   /** 安装包已在后台下好：主按钮写「立即安装」。 */
@@ -16066,6 +16083,8 @@ function UpdateDialog({ update, progress, downloaded = false, onClose, onSkipVer
   onSkipVersion: () => void;
   onMuteToday: () => void;
   onUpdate: () => void;
+  /** 在文件管理器里选中下好的安装包。 */
+  onRevealInstaller?: () => void;
   onOpenUrl: (url: string) => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -16095,6 +16114,12 @@ function UpdateDialog({ update, progress, downloaded = false, onClose, onSkipVer
           <Download className="h-4 w-4" />
           {progress.active ? t("正在安装…") : downloaded ? t("立即安装") : t("立即更新")}
         </Button>
+        {onRevealInstaller && (downloaded || progress.failed) ? (
+          <Button variant="secondary" onClick={onRevealInstaller}>
+            <FolderOpen className="h-4 w-4" />
+            {t("打开所在文件夹")}
+          </Button>
+        ) : null}
         <Button variant="secondary" onClick={onClose}>{t("关闭提示")}</Button>
         <Button variant="ghost" onClick={onMuteToday}>{t("今日不再提示")}</Button>
         <Button variant="ghost" onClick={onSkipVersion}>{t("跳过此版本")}</Button>

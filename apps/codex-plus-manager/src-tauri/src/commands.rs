@@ -8653,6 +8653,30 @@ pub async fn download_update(
     }
 }
 
+/// 在资源管理器 / 访达里显示下好的安装包（还没下好时打开下载目录），方便用户手动运行安装包。
+#[tauri::command]
+pub fn reveal_update_installer(release: Option<codex_plus_core::update::Release>) -> CommandResult<Value> {
+    let dir = update_download_dir();
+    let installer = release
+        .as_ref()
+        .and_then(|release| codex_plus_core::update::downloaded_installer(release, &dir))
+        .map(|(path, _)| path);
+    let target = installer.clone().unwrap_or_else(|| dir.clone());
+    let result = std::fs::create_dir_all(&dir)
+        .map_err(anyhow::Error::from)
+        .and_then(|_| codex_plus_core::update::reveal_in_file_manager(&target));
+    match result {
+        Ok(()) => ok(
+            if installer.is_some() { "已在文件管理器里选中安装包。" } else { "已打开安装包下载目录。" },
+            json!({ "installerPath": target.to_string_lossy(), "downloaded": installer.is_some() }),
+        ),
+        Err(error) => failed(
+            &format!("打开安装包所在文件夹失败：{error}。安装包在 {}", target.display()),
+            json!({ "installerPath": target.to_string_lossy(), "downloaded": installer.is_some() }),
+        ),
+    }
+}
+
 #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 #[tauri::command]
 pub async fn perform_update(
@@ -8739,7 +8763,11 @@ where
             }),
         ),
         Err(error) => failed(
-            &format!("安装更新失败：{error}"),
+            &if codex_plus_core::update::downloaded_installer(&release, &download_dir).is_some() {
+                format!("安装更新失败：{error}。也可以点「打开所在文件夹」，双击安装包手动更新。")
+            } else {
+                format!("安装更新失败：{error}")
+            },
             json!({
                 "currentVersion": codex_plus_core::version::VERSION,
                 "latestVersion": release.version,

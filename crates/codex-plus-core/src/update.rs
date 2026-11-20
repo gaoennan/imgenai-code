@@ -275,8 +275,14 @@ where
             .await
             .map_err(|error| anyhow::anyhow!("准备 macOS 自动更新失败：{error}"))?
     };
+    // Windows 上可能要等用户在 UAC 确认框点「是」，放到阻塞线程里跑。
     #[cfg(not(target_os = "macos"))]
-    let launch_result = launch_installer(&installer_path);
+    let launch_result = {
+        let path = installer_path.clone();
+        tokio::task::spawn_blocking(move || launch_installer(&path))
+            .await
+            .map_err(|error| anyhow::anyhow!("启动安装包失败：{error}"))?
+    };
     if let Err(error) = launch_result {
         let _ = crate::diagnostic_log::append_diagnostic_log(
             "update.launch.failed",
@@ -784,11 +790,25 @@ pub fn launch_installer(path: &Path) -> anyhow::Result<()> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        std::process::Command::new(path)
+        // 装在 Program Files 这类普通权限写不进的目录时（首次安装时手动选的），安装器以普通权限
+        // 运行替换不了程序文件，用户只能自己去找安装包「以管理员身份运行」。这时直接请求提权启动，
+        // 用户在系统确认框点「是」即可。
+        if std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(Path::to_path_buf))
+            .is_some_and(|dir| !dir_is_writable(&dir))
+        {
+            return crate::windows_integration::shell_execute_runas(path);
+        }
+        match std::process::Command::new(path)
             .creation_flags(crate::windows_integration::CREATE_NO_WINDOW)
             .spawn()
-            .map(|_| ())
-            .map_err(|error| anyhow::anyhow!("启动安装包失败：{error}"))
+        {
+            Ok(_) => Ok(()),
+            // 740 = ERROR_ELEVATION_REQUIRED：安装包要求管理员权限，改用系统的提权启动。
+            Err(error) if error.raw_os_error() == Some(740) => crate::windows_integration::shell_execute_runas(path),
+            Err(error) => Err(anyhow::anyhow!("启动安装包失败：{error}")),
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -816,12 +836,95 @@ pub fn launch_installer(path: &Path) -> anyhow::Result<()> {
     }
 }
 
+/// 当前用户能否在 `dir` 里新建文件：建一个临时文件试写，试完删掉。只有「没有权限」算写不进，
+/// 其它错误（目录不存在等）不当作要提权。
+#[cfg_attr(not(windows), allow(dead_code))]
+fn dir_is_writable(dir: &Path) -> bool {
+    let probe = dir.join(format!(".write-probe-{}", std::process::id()));
+    match std::fs::OpenOptions::new().write(true).create_new(true).open(&probe) {
+        Ok(file) => {
+            drop(file);
+            let _ = std::fs::remove_file(&probe);
+            true
+        }
+        Err(error) => error.kind() != std::io::ErrorKind::PermissionDenied,
+    }
+}
+
+/// 在资源管理器 / 访达里显示 `path`：是文件就选中它，是目录就打开它。
+/// 用来让用户找到下好的安装包手动运行。
+pub fn reveal_in_file_manager(path: &Path) -> anyhow::Result<()> {
+    let select = path.is_file();
+    #[cfg(windows)]
+    {
+        // 资源管理器要 Windows 分隔符；选中文件后退出码也可能不是 0，只看能不能启动。
+        let target: PathBuf = path.components().collect();
+        let mut command = std::process::Command::new("explorer");
+        if select {
+            command.arg("/select,");
+        }
+        command
+            .arg(target)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| anyhow::anyhow!("打开资源管理器失败：{error}"))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut command = std::process::Command::new("open");
+        if select {
+            command.arg("-R");
+        }
+        command
+            .arg(path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| anyhow::anyhow!("打开访达失败：{error}"))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let folder = if select { path.parent().unwrap_or(path) } else { path };
+        std::process::Command::new("xdg-open")
+            .arg(folder)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| anyhow::anyhow!("打开文件管理器失败：{error}"))
+    }
+    #[cfg(all(not(windows), not(target_os = "macos"), not(target_os = "linux")))]
+    {
+        let _ = (path, select);
+        anyhow::bail!("当前平台不支持打开文件管理器")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn dir_is_writable_detects_read_only_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(dir_is_writable(dir.path()));
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0, "试写的临时文件要删掉");
+        // 目录不存在不算「没权限」，不触发提权。
+        assert!(dir_is_writable(&dir.path().join("missing")));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let locked = dir.path().join("locked");
+            std::fs::create_dir(&locked).unwrap();
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+            // root 不受目录权限限制，这一条只在普通用户下有意义。
+            let is_root = std::process::Command::new("id").arg("-u").output().map(|out| out.stdout.starts_with(b"0\n")).unwrap_or(false);
+            if !is_root {
+                assert!(!dir_is_writable(&locked));
+            }
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
 
     #[test]
     fn prune_old_installers_keeps_only_recent_installers() {

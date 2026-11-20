@@ -5,7 +5,7 @@ use std::iter::once;
 #[cfg(windows)]
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 #[cfg(windows)]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 #[cfg(windows)]
 use anyhow::Context;
 #[cfg(windows)]
@@ -40,7 +40,7 @@ use windows::Win32::UI::Shell::{
     ShellExecuteW, ShellLink,
 };
 #[cfg(windows)]
-use windows::Win32::UI::WindowsAndMessaging::SW_SHOWMINNOACTIVE;
+use windows::Win32::UI::WindowsAndMessaging::{SW_SHOWMINNOACTIVE, SW_SHOWNORMAL};
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GWL_EXSTYLE, GetClassNameW, GetWindowLongPtrW, GetWindowTextLengthW,
@@ -230,6 +230,33 @@ pub fn open_url(url: &str) -> anyhow::Result<()> {
             )
         }
     }
+}
+
+/// 以管理员身份启动程序（系统弹出 UAC 确认框）。用户点「是」后返回；点「否」返回错误。
+/// 用来启动更新安装包：程序装在 Program Files 这类普通权限写不进的目录时，安装器要提权才能替换文件。
+#[cfg(windows)]
+pub fn shell_execute_runas(path: &Path) -> anyhow::Result<()> {
+    let operation = wide_null("runas");
+    let file = wide_null(path.as_os_str());
+    let result = unsafe {
+        ShellExecuteW(
+            None,
+            PCWSTR(operation.as_ptr()),
+            PCWSTR(file.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    let code = result.0 as isize;
+    if code > 32 {
+        return Ok(());
+    }
+    // 5 = SE_ERR_ACCESSDENIED：用户在 UAC 确认框点了「否」。
+    if code == 5 {
+        anyhow::bail!("需要管理员权限才能完成更新：请在系统弹出的确认框里点「是」");
+    }
+    anyhow::bail!("以管理员身份启动安装包失败（ShellExecuteW={code}）")
 }
 
 #[cfg(windows)]

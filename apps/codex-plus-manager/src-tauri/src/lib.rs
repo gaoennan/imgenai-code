@@ -619,6 +619,7 @@ pub fn run() {
             commands::skip_update_version,
             commands::perform_update,
             commands::download_update,
+            commands::reveal_update_installer,
             commands::load_watcher_state,
             commands::set_watcher_enabled,
             commands::set_watcher_start_minimized,

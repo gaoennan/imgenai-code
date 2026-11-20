@@ -42,6 +42,11 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         "Command::new(\"explorer\")",
         "explorer 是 GUI 程序，用来在资源管理器里显示文件",
     ),
+    (
+        "crates/codex-plus-core/src/update.rs",
+        "Command::new(\"explorer\")",
+        "explorer 是 GUI 程序，用来在资源管理器里选中下好的安装包",
+    ),
     // 刻意打开终端：用户点「在终端继续 / 在终端启动」就是要看到窗口。
     (
         "crates/codex-plus-core/src/gateway/sessions.rs",

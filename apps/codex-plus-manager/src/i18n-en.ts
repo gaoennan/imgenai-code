@@ -306,6 +306,8 @@ export const EN_PLAIN: Record<string, string> = {
   "组操作": "Group actions",
   "正在等后台下载完成…": "Waiting for the background download to finish…",
   "立即安装": "Install now",
+  "打开所在文件夹": "Show in folder",
+  "在文件管理器里选中下好的安装包，可以手动双击安装": "Select the downloaded installer in your file manager so you can run it yourself",
   "点击安装": "Click to install",
   "正在安装…": "Installing…",
   "后台下载没成功，点「下载并安装」重试": "Background download failed; click Download and install to retry",

@@ -722,6 +722,7 @@ export async function invoke<T = unknown>(command: string, args: Record<string, 
     case "check_update": if (!new URLSearchParams(window.location.search).has("showUpdate")) return ok({ currentVersion: "2.6.10", latestVersion: "2.6.10", releaseSummary: "", assetName: null, assetUrl: null, updateAvailable: false, progress: 0 }) as T;
       return ok({ currentVersion: "2.6.10", latestVersion: "2.6.10", releaseSummary: "### 新增\n- 界面整体重做", assetName: "Codex++-2.3.0.dmg", assetUrl: "https://example.test/Codex++-2.3.0.dmg", updateAvailable: true, downloaded: false, progress: 0 }) as T;
     case "download_update": await new Promise((resolve) => setTimeout(resolve, 1000)); return ok({ downloaded: true, latestVersion: "2.6.10" }) as T;
+    case "reveal_update_installer": return ok({ installerPath: "/Users/demo/.codex-session-delete/updates/Codex++-2.3.0.dmg", downloaded: true }) as T;
     // 「日志与诊断」演示：几条诊断日志（含出错和重试）和一份诊断报告。
     case "read_latest_logs": {
       const now = Date.now();

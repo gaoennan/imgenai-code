@@ -76,6 +76,8 @@ const RULES = [
   { name: "Windows 卸载项", from: /Uninstall\\CodexPlusPlus/g, to: `Uninstall\\${UNINSTALL_KEY}` },
   { name: "安装包文件名", from: /CodexPlusPlus-(\$\{VERSION\}|\*|\$VERSION)/g, to: `imgenaiCode-$1` },
   { name: "安装器发布者", from: /"Publisher" "BigPizzaV3"/g, to: '"Publisher" "imgenai"' },
+  // 安装包文件属性里的公司名跟发布者一致；版权一栏是原作者署名，保留不改。
+  { name: "安装器公司名", from: /"CompanyName" "BigPizzaV3"/g, to: '"CompanyName" "imgenai"' },
   // 广告源也出现在注入 Codex 页面的脚本里（页面自己直接拉），不只 ads.rs，所以全局换。
   ...adListRules("广告源（全局）"),
   {

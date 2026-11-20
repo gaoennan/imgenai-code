@@ -39,7 +39,7 @@ When you open the app, a getting-started guide walks you through these steps.
 3. Subscribe by QR code or start a free trial. imgenai then appears in the provider pool.
 4. Click "Connect for me" in the guide, or open "Codex 接入" (Codex setup) in the sidebar, click the default model on the Codex row and pick any model under imgenai. Then launch Codex.
 
-The Windows installer is not code-signed yet. If SmartScreen appears, click "More info" and then "Run anyway". The macOS build is signed with an Apple Developer ID, but Apple notarization is still pending. The first time you open a copy downloaded from the web, macOS says it cannot verify the app is free of malware. Click "Done", go to System Settings → Privacy & Security, click "Open Anyway" near the bottom and enter your password. On macOS 14 and earlier you can also Control-click imgenai Code in Applications and choose "Open". Updating from inside the app does not show this prompt.
+The Windows installer is not code-signed yet. If SmartScreen appears, click "More info" and then "Run anyway". The macOS build is signed with an Apple Developer ID and notarized by Apple: open the .dmg, drag imgenai Code into Applications and double-click it.
 
 ## License
 

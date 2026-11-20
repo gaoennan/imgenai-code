@@ -61,11 +61,11 @@ imgenai Code 是 [imgenai](https://imgenai.net) 的桌面客户端，在开源�
 ## 常见问题
 
 <details>
-  <summary><strong>安装后打不开，提示「Windows 已保护你的电脑」或「无法验证」怎么办？</strong></summary>
+  <summary><strong>Windows 安装时提示「Windows 已保护你的电脑」怎么办？</strong></summary>
 
 Windows 安装包暂未做代码签名，点「更多信息」，再点「仍要运行」即可。
 
-macOS 安装包已用 Apple 开发者证书签名，但 Apple 公证还在排队。从网页下载后第一次打开会提示 Apple 无法验证它是否包含恶意软件，先点「完成」，再到「系统设置 → 隐私与安全性」底部点「仍要打开」并输入开机密码，之后就能正常打开。macOS 14 及更早的系统也可以在「应用程序」里按住 Control 点 imgenai Code，选「打开」。在客户端里点「安装」更新不会出现这个提示。
+macOS 安装包已用 Apple 开发者证书签名并通过 Apple 公证，下载后打开 .dmg，把 imgenai Code 拖进「应用程序」，双击即可打开。
 
 </details>
 

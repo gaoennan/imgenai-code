@@ -206,8 +206,27 @@ pub async fn fetch_latest_release(latest_json_url: &str) -> anyhow::Result<Relea
     release_from_latest_json_payload(&payload)
 }
 
+/// 依次读几个更新清单，以第一个读到的为准。imgenai Code 先读国内下载站，失败再读 GitHub。
+async fn fetch_latest_release_from_any(urls: &[String]) -> anyhow::Result<Release> {
+    let mut last_error = None;
+    for url in urls {
+        match fetch_latest_release(url).await {
+            Ok(release) => return Ok(release),
+            Err(error) => {
+                let _ = crate::diagnostic_log::append_diagnostic_log(
+                    "update.check.source_failed",
+                    json!({ "url": url, "error": error.to_string() }),
+                );
+                last_error = Some(error);
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("没有可用的更新源")))
+}
+
 pub async fn check_for_update(current_version: &str) -> anyhow::Result<UpdateCheck> {
-    let release = fetch_latest_release(DEFAULT_LATEST_JSON_URL).await?;
+    let release =
+        fetch_latest_release_from_any(&crate::imgenai_update_mirror::latest_json_urls(DEFAULT_LATEST_JSON_URL)).await?;
     let update_available = is_newer_version(&release.version, current_version)?;
     Ok(UpdateCheck {
         current_version: current_version.to_string(),
@@ -333,6 +352,52 @@ where
         .asset_url
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("没有可下载的 Release asset"))?;
+    // imgenai：安装包地址是国内下载站时，下不动就改从 GitHub 发布页下同一个安装包。
+    let fallback = crate::imgenai_update_mirror::github_fallback_asset_url(DEFAULT_LATEST_JSON_URL, &release.version, url);
+    download_release_asset_with_fallback(release, url, fallback.as_deref(), download_dir, on_progress).await
+}
+
+async fn download_release_asset_with_fallback<F>(
+    release: &Release,
+    url: &str,
+    fallback_url: Option<&str>,
+    download_dir: &Path,
+    on_progress: &mut F,
+) -> anyhow::Result<(PathBuf, u64, Option<u64>)>
+where
+    F: FnMut(UpdateProgress),
+{
+    let error = match download_release_asset_from(release, url, download_dir, on_progress).await {
+        Ok(result) => return Ok(result),
+        Err(error) => error,
+    };
+    let Some(fallback_url) = fallback_url else {
+        return Err(error);
+    };
+    let _ = crate::diagnostic_log::append_diagnostic_log(
+        "update.download.fallback",
+        json!({
+            "version": release.version,
+            "assetName": release.asset_name,
+            "from": url,
+            "to": fallback_url,
+            "error": error.to_string()
+        }),
+    );
+    download_release_asset_from(release, fallback_url, download_dir, on_progress)
+        .await
+        .map_err(|fallback_error| anyhow::anyhow!("{error}；改从 GitHub 下载也失败：{fallback_error}"))
+}
+
+async fn download_release_asset_from<F>(
+    release: &Release,
+    url: &str,
+    download_dir: &Path,
+    on_progress: &mut F,
+) -> anyhow::Result<(PathBuf, u64, Option<u64>)>
+where
+    F: FnMut(UpdateProgress),
+{
     let download_started = Instant::now();
     let _ = crate::diagnostic_log::append_diagnostic_log(
         "update.perform.start",
@@ -851,5 +916,124 @@ mod tests {
             .iter()
             .any(|progress| progress.stage == UpdateStage::Downloading && progress.downloaded_bytes > 0));
         assert_eq!(observed.last().map(|progress| progress.stage), Some(UpdateStage::Writing));
+    }
+
+    fn test_release(asset_url: &str) -> Release {
+        Release {
+            version: "v9.9.9".to_string(),
+            url: String::new(),
+            body: String::new(),
+            asset_name: Some("CodexPlusPlus-9.9.9-windows-x64-setup.exe".to_string()),
+            asset_url: Some(asset_url.to_string()),
+        }
+    }
+
+    #[tokio::test]
+    async fn update_check_falls_back_to_next_latest_json_when_first_fails() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("GET")).and(path("/mirror/latest.json")).respond_with(ResponseTemplate::new(502)).expect(1).mount(&server).await;
+        Mock::given(method("GET"))
+            .and(path("/github/latest.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "version": "v9.9.9",
+                "url": "https://example.test/release",
+                "body": "从 GitHub 读到的",
+                "assets": []
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let urls = vec![format!("{}/mirror/latest.json", server.uri()), format!("{}/github/latest.json", server.uri())];
+        let release = fetch_latest_release_from_any(&urls).await.unwrap();
+        assert_eq!(release.version, "v9.9.9");
+        assert_eq!(release.body, "从 GitHub 读到的");
+    }
+
+    #[tokio::test]
+    async fn update_check_uses_first_latest_json_that_answers() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/mirror/latest.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "version": "v9.9.8", "assets": [] })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET")).and(path("/github/latest.json")).respond_with(ResponseTemplate::new(200)).expect(0).mount(&server).await;
+        let urls = vec![format!("{}/mirror/latest.json", server.uri()), format!("{}/github/latest.json", server.uri())];
+        assert_eq!(fetch_latest_release_from_any(&urls).await.unwrap().version, "v9.9.8");
+    }
+
+    #[tokio::test]
+    async fn installer_download_falls_back_when_mirror_fails() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("GET")).and(path("/mirror/setup.exe")).respond_with(ResponseTemplate::new(404)).expect(1).mount(&server).await;
+        Mock::given(method("GET"))
+            .and(path("/github/setup.exe"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"installer-from-github".to_vec()))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let primary = format!("{}/mirror/setup.exe", server.uri());
+        let fallback = format!("{}/github/setup.exe", server.uri());
+        let directory = tempfile::tempdir().unwrap();
+        let (path, downloaded, _) = download_release_asset_with_fallback(
+            &test_release(&primary),
+            &primary,
+            Some(&fallback),
+            directory.path(),
+            &mut |_| {},
+        )
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"installer-from-github");
+        assert_eq!(downloaded, b"installer-from-github".len() as u64);
+        assert!(downloaded_installer(&test_release(&primary), directory.path()).is_some(), "回落下好的安装包要算下载完成");
+    }
+
+    #[tokio::test]
+    async fn installer_download_reports_both_errors_and_skips_fallback_when_mirror_works() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("GET")).and(path("/mirror/bad.exe")).respond_with(ResponseTemplate::new(404)).mount(&server).await;
+        Mock::given(method("GET")).and(path("/github/bad.exe")).respond_with(ResponseTemplate::new(500)).mount(&server).await;
+        Mock::given(method("GET"))
+            .and(path("/mirror/good.exe"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"installer-from-mirror".to_vec()))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET")).and(path("/github/good.exe")).respond_with(ResponseTemplate::new(200)).expect(0).mount(&server).await;
+        let directory = tempfile::tempdir().unwrap();
+
+        let bad = format!("{}/mirror/bad.exe", server.uri());
+        let error = download_release_asset_with_fallback(
+            &test_release(&bad),
+            &bad,
+            Some(&format!("{}/github/bad.exe", server.uri())),
+            directory.path(),
+            &mut |_| {},
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("404") && error.contains("改从 GitHub 下载也失败") && error.contains("500"), "{error}");
+
+        let good = format!("{}/mirror/good.exe", server.uri());
+        let (path, _, _) = download_release_asset_with_fallback(
+            &test_release(&good),
+            &good,
+            Some(&format!("{}/github/good.exe", server.uri())),
+            directory.path(),
+            &mut |_| {},
+        )
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"installer-from-mirror");
     }
 }

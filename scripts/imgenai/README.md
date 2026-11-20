@@ -14,6 +14,7 @@ imgenai Code 是在开源项目 [Codex++](https://github.com/BigPizzaV3/CodexPlu
 | 拓展供应商 `pool` | `crates/codex-plus-core/src/gateway/extension_pool.rs`，调用点在管理器的 `set_extension_config`、拓展开关与启动时 | 登录拿到密钥后把 imgenai 写进供应商池（看得到、能选模型），退出登录时移出 |
 | 池里的 imgenai 自动补新模型 | `extension_pool.rs` 的 `offer_models`，上游检查在管理器 `gateway_commands.rs` 的 `watch_extension_pool_models` | 只加不删：新版 `codexpp.json` 多声明的模型在同步时补上；上游 `/models` 新出的每 6 小时查一次补上。给过的记在供应商的 `extensionOfferedModels`，用户删掉的不再加回。服务端上新型号后仍要在 `codexpp.json` 的 `prices` 补实扣单价并发版，否则用量页按公开价算 |
 | 上手指引 | `apps/codex-plus-manager/src/ImgenaiGuide.tsx`（界面）、`imgenai-guide-model.ts`（按真实状态算当前步骤，有测试），接线在 `App.tsx` | 替代上游的入门清单与界面导览（上游那套教人「添加供应商」）：登录 → 开通 → 让 Codex 用 imgenai（可一键接入）→ 启动 Codex，每步看真实状态打勾，要点的元素用 `data-guide` / `data-agent-row` 等锚点圈出来。首次启动不再问使用模式，直接记成「只管理 Codex」。欢迎卡每次打开客户端都弹（已配好的显示怎么用），勾「以后不再弹出」才不自动弹（localStorage `imgenai.guide.noAutoOpen`），侧栏「上手指引」和「设置 → 通用 → 重新打开引导」随时再打开；面板里四步都能点开回看（做完的步骤讲在哪改），底部「上一步 / 下一步」翻页，配好的从第一步看起；侧栏进度卡只在没配好时出现 |
+| 检查更新走国内下载站 | `crates/codex-plus-core/src/imgenai_update_mirror.rs`，调用点在 `update.rs` 的 `check_for_update` 与安装包下载 | 先读 `https://api.imgenai.net/download/latest.json`（同 GitHub 的 latest.json，安装包地址换成下载站），读不到再读 GitHub；安装包从下载站下不动时改从 GitHub 发布页下同一个文件。只在 `rebrand.mjs` 把更新源换成 imgenai-code 后生效。下载站由发版后的同步脚本更新，见下文「发版」 |
 | 「添加供应商」目录的 imgenai 入口 | `apps/codex-plus-manager/src/GatewayProviders.tsx` | 点开跳到「imgenai 账户」页；构建时 `rebrand.mjs` 清掉上游赞助商（同行中转站） |
 | 改名为 imgenai Code | `scripts/imgenai/rebrand.mjs` | **只在构建副本上执行**，源码分支保持上游写法 |
 | 仓库首页 | `.github/README.md`、`README_EN.md`、`CONTRIBUTING.md`、`imgenai/hero.svg` | GitHub 优先显示 `.github/` 里的这几份；根目录同名文件保持上游原样，合并时不冲突 |
@@ -43,6 +44,8 @@ git push origin imgenai-v1.0.1
 ```
 
 推标签后云端构建 macOS 通用 DMG 与 Windows 安装包、生成 `latest.json`，**停在草稿**（只有仓库成员看得到）。确认安装包没问题后在 GitHub 网页上把草稿发布（勾选 Latest），客户端的「检查更新」才会读到这一版。
+
+公开发布后，还要把这一版同步到国内下载站 `api.imgenai.net/download/`（同步脚本不在仓库里，由维护者在自己电脑上执行）。客户端检查更新先读下载站，下载站读得到就不会去读 GitHub，所以不同步的话，国内用户会一直停在上一版。
 
 公证等超时（Apple 新账号头几次常排好几个小时）时 Mac 那一步会失败，但包和公证提交号已经存成这次运行的构建产物 `macos-dmg-pending`（留 14 天）。在这次运行上点「Re-run failed jobs」（或 `gh run rerun <运行号> --failed`），会接着等同一个提交，通过后装订、上传并补齐 `latest.json`，不重新打包，也不用从头排队。
 

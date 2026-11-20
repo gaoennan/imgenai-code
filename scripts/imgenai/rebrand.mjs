@@ -157,6 +157,15 @@ const POST_FILE_RULES = {
     },
     { name: "管理器：去掉上游 Discord", from: /\s*<CxRow detail="discord\.gg\/y96kX7A76v"[\s\S]*?<\/CxRow>/g, to: "" },
     { name: "管理器：去掉上游 Telegram", from: /\s*<CxRow detail="t\.me\/CodexPlusPlus"[\s\S]*?<\/CxRow>/g, to: "" },
+    // 检查更新先走国内下载站（imgenai_update_mirror.rs），设置页的说明跟着改。
+    { name: "管理器：更新来源说明", from: /t\("从 GitHub Release 下载安装包更新"\)/g, to: 't("从 imgenai 下载站下载安装包更新")' },
+  ],
+  "apps/codex-plus-manager/src/i18n-en.ts": [
+    {
+      name: "英文：更新来源说明",
+      from: /"从 GitHub Release 下载安装包更新": "Updates are downloaded from GitHub Releases",/g,
+      to: '"从 imgenai 下载站下载安装包更新": "Updates are downloaded from the imgenai mirror, with GitHub Releases as a fallback",',
+    },
   ],
   // macOS 菜单栏托盘图标：原版按「偏橙程度」从橙色 logo 抠出模板图；imgenai 图标是紫色，照原算法会整张透明、托盘里看不见。
   // 改按「偏紫程度」（B - G）：紫色六边形保留，白色圆点与浅色底板抠空（取值见 brand/make-icons.py 生成的图标）。

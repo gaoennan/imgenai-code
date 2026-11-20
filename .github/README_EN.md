@@ -33,7 +33,7 @@ imgenai Code is the desktop client for [imgenai](https://imgenai.net), built on 
 
 When you open the app, a getting-started guide walks you through these steps.
 
-1. Download from [Releases](https://github.com/gaoennan/imgenai-code/releases): `imgenaiCode-<version>-macos-universal.dmg` for macOS (Apple silicon and Intel) or `imgenaiCode-<version>-windows-x64-setup.exe` for Windows.
+1. Download the latest build from the mainland China mirror ([macOS](https://api.imgenai.net/download/mac) · [Windows](https://api.imgenai.net/download/win)) or from [Releases](https://github.com/gaoennan/imgenai-code/releases): `imgenaiCode-<version>-macos-universal.dmg` for macOS (Apple silicon and Intel) or `imgenaiCode-<version>-windows-x64-setup.exe` for Windows.
 2. Open imgenai Code, go to "imgenai 账户" (imgenai account) under the gateway section, and sign in with your imgenai.net account.
 3. Subscribe by QR code or start a free trial. imgenai then appears in the provider pool.
 4. Click "Connect for me" in the guide, or open "Codex 接入" (Codex setup) in the sidebar, click the default model on the Codex row and pick any model under imgenai. Then launch Codex.

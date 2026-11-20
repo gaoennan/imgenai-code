@@ -44,7 +44,7 @@ imgenai Code 是 [imgenai](https://imgenai.net) 的桌面客户端，在开源�
 
 打开客户端会弹出「上手指引」，跟着点就行。下面是同样的几步。
 
-**1. 下载安装包**：前往 [Releases](https://github.com/gaoennan/imgenai-code/releases)。
+**1. 下载安装包**：国内直连下载最新版 [macOS](https://api.imgenai.net/download/mac) · [Windows](https://api.imgenai.net/download/win) · [Windows 免安装版](https://api.imgenai.net/download/win-zip)，也可以前往 [Releases](https://github.com/gaoennan/imgenai-code/releases)。
 
 | 你的设备 | 安装包 |
 | --- | --- |
@@ -99,7 +99,7 @@ macOS 安装包已用 Apple 开发者证书签名，但 Apple 公证还在排队
 <details>
   <summary><strong>怎么更新？</strong></summary>
 
-客户端会读取本仓库 Releases 里的新版本，在侧栏提示，点「安装」即可。也可以随时到 [Releases](https://github.com/gaoennan/imgenai-code/releases) 下载新版覆盖安装，配置与会话会保留。
+客户端会检查新版本并在侧栏提示，点「安装」即可。检查和下载先走国内下载站 api.imgenai.net，连不上时改走本仓库 Releases。也可以随时到 [Releases](https://github.com/gaoennan/imgenai-code/releases) 下载新版覆盖安装，配置与会话会保留。
 
 </details>
 
